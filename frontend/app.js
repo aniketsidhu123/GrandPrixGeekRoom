@@ -135,7 +135,9 @@ function initWebSocket() {
             canvas.height = gridConfig.height * CELL_SIZE;
             minimapCanvas.width = gridConfig.width * 4;
             minimapCanvas.height = gridConfig.height * 4;
+            console.log('[CFO] Grid config received:', gridConfig.width, 'x', gridConfig.height, '=> canvas:', canvas.width, 'x', canvas.height);
             drawBaseLayer();
+            console.log('[CFO] Base layer drawn, baseCanvas:', baseCanvas ? baseCanvas.width + 'x' + baseCanvas.height : 'null');
         } else if (data.type === 'state_update') {
             // Store previous positions for interpolation
             if (simulationState && simulationState.agents) {
@@ -469,6 +471,18 @@ function draw() {
     if (!gridConfig) {
         requestAnimationFrame(draw);
         return;
+    }
+
+    // Debug: log once every 300 frames (~5 seconds)
+    if (animationFrame % 300 === 0) {
+        console.log('[CFO draw]', {
+            canvasW: canvas.width, canvasH: canvas.height,
+            displayW: canvas.offsetWidth, displayH: canvas.offsetHeight,
+            zoomLevel, panX, panY,
+            hasBase: !!baseCanvas,
+            agents: simulationState ? simulationState.agents.length : 0,
+            hasHeatmap: !!(heatmapData && heatmapData.heatmap),
+        });
     }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);

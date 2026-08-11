@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import asyncio
@@ -33,6 +34,14 @@ app.mount("/static", StaticFiles(directory=frontend_dir, html=True), name="stati
 
 sim_engine = SimulationEngine()
 
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/static/index.html")
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SIMULATION LOOP
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -44,12 +53,11 @@ async def startup_event():
 async def simulation_loop():
     sim_engine.running = True
     while sim_engine.running:
-        if len(sim_engine.agents) < 50:
-            sim_engine.spawn_agents(5)
-            
-        sim_engine.update()
-        # Tick rate scales inversely with sim speed for consistency
-        await asyncio.sleep(max(0.1, 0.5 / sim_engine.sim_speed))
+        if sim_engine.sim_speed > 0:
+            sim_engine.update()
+            await asyncio.sleep(max(0.1, 0.5 / sim_engine.sim_speed))
+        else:
+            await asyncio.sleep(0.5)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # WEBSOCKET CONNECTION MANAGER
@@ -147,7 +155,8 @@ async def broadcast_state():
                 "state": state,
                 "heatmap": heatmap_data,
             })
-        await asyncio.sleep(max(0.1, 0.5 / sim_engine.sim_speed))
+        sleep_time = max(0.1, 0.5 / sim_engine.sim_speed) if sim_engine.sim_speed > 0 else 0.5
+        await asyncio.sleep(sleep_time)
 
 @app.on_event("startup")
 async def start_broadcaster():
