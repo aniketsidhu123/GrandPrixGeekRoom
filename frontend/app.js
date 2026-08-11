@@ -49,6 +49,11 @@ const btnSpawn = document.getElementById('btn-spawn');
 const btnClear = document.getElementById('btn-clear');
 const crowdSizeInput = document.getElementById('crowd-size');
 const crowdSizeVal = document.getElementById('crowd-size-val');
+
+const btnVisionStart = document.getElementById('btn-vision-start');
+const btnVisionStop = document.getElementById('btn-vision-stop');
+const visionStatus = document.getElementById('vision-status');
+
 const statAgents = document.getElementById('stat-agents');
 const statRerouted = document.getElementById('stat-rerouted');
 const statMaxDensity = document.getElementById('stat-max-density');
@@ -461,6 +466,21 @@ function drawMinimap() {
             );
         }
     }
+
+    // Draw real agents (Vision Pipeline)
+    if (simulationState && simulationState.real_agents) {
+        for (const real_agent of simulationState.real_agents) {
+            mCtx.fillStyle = '#ec4899'; // Pink/Magenta for real agents
+            mCtx.beginPath();
+            mCtx.arc(
+                Math.floor(real_agent.x) * scale + 2,
+                Math.floor(real_agent.y) * scale + 2,
+                3, 0, Math.PI * 2
+            );
+            mCtx.fill();
+            // Optional: Draw bounding box or label based on type
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -844,7 +864,29 @@ canvas.addEventListener('mousemove', (e) => {
         panY = e.clientY - dragStartY;
     }
 
-    // Tooltip: show density info on hover
+    // Vision Pipeline Integration
+btnVisionStart.addEventListener('click', () => {
+    fetch('/api/vision/start', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            visionStatus.textContent = 'Running';
+            visionStatus.style.backgroundColor = '#10b981';
+            visionStatus.style.color = '#fff';
+        })
+        .catch(err => console.error(err));
+});
+
+btnVisionStop.addEventListener('click', () => {
+    fetch('/api/vision/stop', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            visionStatus.textContent = 'Stopped';
+            visionStatus.style.backgroundColor = '#64748b';
+        })
+        .catch(err => console.error(err));
+});
+
+// Tooltip logic: show density info on hover
     if (gridConfig && heatmapData && heatmapData.heatmap) {
         const rect = canvas.getBoundingClientRect();
         const mx = (e.clientX - rect.left - panX) / zoomLevel;

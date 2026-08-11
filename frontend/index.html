@@ -265,6 +265,21 @@
                 </div>
             </section>
 
+            <!-- AI Vision Pipeline -->
+            <section class="panel" id="panel-vision">
+                <div class="panel-header">
+                    <span class="panel-title">AI Vision Ingestion</span>
+                    <span class="panel-badge" id="vision-status">Stopped</span>
+                </div>
+                <div class="actions" style="margin-top: 10px;">
+                    <button id="btn-vision-start" class="btn primary" style="background-color: var(--secondary);">Start Camera</button>
+                    <button id="btn-vision-stop" class="btn danger">Stop</button>
+                </div>
+                <div style="font-size: 0.72rem; color: var(--text-dim); text-align: center; margin-top: 8px;">
+                    Injects live real-world data (YOLO + Depth).
+                </div>
+            </section>
+
             <!-- Live Stats -->
             <section class="panel" id="panel-stats">
                 <div class="panel-header">
