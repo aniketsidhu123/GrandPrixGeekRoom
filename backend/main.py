@@ -9,6 +9,7 @@ import os
 import json
 
 from .simulation import SimulationEngine
+from .vision.pipeline import VisionPipeline
 
 app = FastAPI(
     title="Crowd Flow Optimiser",
@@ -33,6 +34,10 @@ if not os.path.exists(frontend_dir):
 app.mount("/static", StaticFiles(directory=frontend_dir, html=True), name="static")
 
 sim_engine = SimulationEngine()
+
+# Initialize Vision Pipeline (but don't start capture yet)
+vision_pipeline = VisionPipeline(grid_width=sim_engine.width, grid_height=sim_engine.height)
+vision_pipeline.on_agents_detected = sim_engine.ingest_real_data
 
 @app.get("/")
 async def root():
@@ -185,6 +190,21 @@ async def ingest_vision_data(payload: VisionIngestionPayload):
     """
     print(f"Received {len(payload.detections)} detections from {payload.camera_id}")
     return {"status": "success", "processed": len(payload.detections)}
+
+@app.post("/api/vision/start")
+async def start_vision_pipeline():
+    """Start the real-time AI vision pipeline."""
+    if not vision_pipeline.running:
+        # Initialize models (this blocks, in prod maybe background task)
+        vision_pipeline.initialize()
+        asyncio.create_task(vision_pipeline.start())
+    return {"status": "started"}
+
+@app.post("/api/vision/stop")
+async def stop_vision_pipeline():
+    """Stop the real-time AI vision pipeline."""
+    vision_pipeline.stop()
+    return {"status": "stopped"}
 
 @app.get("/prediction")
 async def get_prediction():

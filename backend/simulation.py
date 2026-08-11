@@ -25,6 +25,7 @@ class SimulationEngine:
         self.height = height
         self.grid = self._generate_default_grid()
         self.agents: List[Agent] = []
+        self.real_agents: List[Dict] = []  # Added for Vision Pipeline
         self.bottlenecks: List[Point] = []
         self.suggested_routes: Dict[int, List[Point]] = {}
         self.agent_id_counter = 0
@@ -195,10 +196,20 @@ class SimulationEngine:
             
             self.agents.append(agent)
             spawned += 1
-            gate_state.agents_passed += 1
-        
         # Update ingress estimate for prediction engine
-        self.prediction_engine.update_ingress_estimate(spawned)
+        
+    def ingest_real_data(self, real_agents_data: List[Dict]):
+        """
+        Phase 1: Purely Real Update.
+        Accepts data from the Vision Pipeline and updates the real_agents list.
+        Data format: [{"id": str, "x": float, "y": float, "type": str, "class_id": int, "conf": float, "depth": float}]
+        """
+        self.real_agents = real_agents_data
+        
+        # Note for Phase 2 (Hybrid Merge):
+        # Real agents now influence synthetic agents via the Social Force Model.
+
+        self.prediction_engine.update_ingress_estimate(len(real_agents_data))
             
     def update(self):
         """Main simulation tick."""
@@ -206,7 +217,7 @@ class SimulationEngine:
         self.sim_time += 0.5 * self.sim_speed  # 0.5s per tick at 1× speed
         
         # 1. Update positions using Social Force Model
-        self.sfm.update_positions(self.agents, self.walls_cache)
+        self.sfm.update_positions(self.agents, self.walls_cache, self.real_agents)
         
         # 2. Check path progress and goals
         for agent in self.agents:
@@ -418,6 +429,7 @@ class SimulationEngine:
         
         return SimulationState(
             agents=self.agents,
+            real_agents=self.real_agents,
             bottlenecks=self.bottlenecks,
             suggested_routes=self.suggested_routes,
             zone_densities=self.zone_densities[:100],  # Cap payload

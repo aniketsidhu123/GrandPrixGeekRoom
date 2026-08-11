@@ -81,7 +81,7 @@ class SocialForceModel:
         self._wall_set: set = set()
         self._wall_set_initialized = False
         
-    def calculate_forces(self, agents: List[Agent], walls: List[Tuple[int, int]]) -> np.ndarray:
+    def calculate_forces(self, agents: List[Agent], walls: List[Tuple[int, int]], real_agents: List[Dict] = None) -> np.ndarray:
         if not agents:
             return np.zeros((0, 2))
             
@@ -162,6 +162,41 @@ class SocialForceModel:
                     
                 forces[i] += f_repulsion
                 
+        # ━━━ 2b. REAL AGENT REPULSION (Vision Pipeline Integration) ━━━
+        if real_agents:
+            for i in range(n):
+                if agents[i].status == "arrived":
+                    continue
+                    
+                for r_agent in real_agents:
+                    # Treat real agents as dynamic obstacles
+                    r_pos = np.array([r_agent["x"], r_agent["y"]])
+                    r_radius = 0.3 # default radius for real humans
+                    r_ij = agents[i].radius + r_radius
+                    d_ij = positions[i] - r_pos
+                    d = np.linalg.norm(d_ij)
+                    
+                    if d < 0.05:
+                        angle = np.random.uniform(0, 2 * np.pi)
+                        forces[i] += np.array([np.cos(angle), np.sin(angle)]) * 200.0
+                        continue
+                        
+                    if d < 3.0: # Only compute within interaction range
+                        n_ij = d_ij / d
+                        # Higher repulsion strength for real agents (they are anchoring ground truth)
+                        f_repulsion = (self.A * 1.2) * np.exp((r_ij - d) / self.B) * n_ij
+                        
+                        if d < r_ij:
+                            overlap = r_ij - d
+                            f_repulsion += self.k * overlap * n_ij
+                            
+                        # Cap per-pair force
+                        f_mag = np.linalg.norm(f_repulsion)
+                        if f_mag > 2000.0:
+                            f_repulsion = (f_repulsion / f_mag) * 2000.0
+                            
+                        forces[i] += f_repulsion
+                
         # ━━━ 3. WALL REPULSION ━━━
         if not self._wall_set_initialized:
             self._wall_set = set(walls)
@@ -217,8 +252,8 @@ class SocialForceModel:
                         
         return forces
 
-    def update_positions(self, agents: List[Agent], walls: List[Tuple[int, int]]):
-        forces = self.calculate_forces(agents, walls)
+    def update_positions(self, agents: List[Agent], walls: List[Tuple[int, int]], real_agents: List[Dict] = None):
+        forces = self.calculate_forces(agents, walls, real_agents)
         
         for i, a in enumerate(agents):
             if a.status == "arrived":
