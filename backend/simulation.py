@@ -401,7 +401,7 @@ class SimulationEngine:
                 
     def set_sim_speed(self, speed: float):
         """Set simulation speed multiplier."""
-        self.sim_speed = max(0.25, min(10.0, speed))
+        self.sim_speed = max(0.0, min(10.0, speed))
     
     def actuate_gate(self, gate_id: str, action: str, rate: float = 3.5):
         """Manually control a gate."""

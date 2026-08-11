@@ -53,12 +53,11 @@ async def startup_event():
 async def simulation_loop():
     sim_engine.running = True
     while sim_engine.running:
-        if len(sim_engine.agents) < 50:
-            sim_engine.spawn_agents(5)
-            
-        sim_engine.update()
-        # Tick rate scales inversely with sim speed for consistency
-        await asyncio.sleep(max(0.1, 0.5 / sim_engine.sim_speed))
+        if sim_engine.sim_speed > 0:
+            sim_engine.update()
+            await asyncio.sleep(max(0.1, 0.5 / sim_engine.sim_speed))
+        else:
+            await asyncio.sleep(0.5)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # WEBSOCKET CONNECTION MANAGER
@@ -156,7 +155,8 @@ async def broadcast_state():
                 "state": state,
                 "heatmap": heatmap_data,
             })
-        await asyncio.sleep(max(0.1, 0.5 / sim_engine.sim_speed))
+        sleep_time = max(0.1, 0.5 / sim_engine.sim_speed) if sim_engine.sim_speed > 0 else 0.5
+        await asyncio.sleep(sleep_time)
 
 @app.on_event("startup")
 async def start_broadcaster():

@@ -30,6 +30,7 @@
             </div>
             <div class="header-center">
                 <div class="speed-controls">
+                    <button class="speed-btn" data-speed="0" id="speed-0x">⏸ Pause</button>
                     <button class="speed-btn active" data-speed="1" id="speed-1x">1×</button>
                     <button class="speed-btn" data-speed="2" id="speed-2x">2×</button>
                     <button class="speed-btn" data-speed="5" id="speed-5x">5×</button>
@@ -234,11 +235,206 @@
                 <div class="bottom-stat">Speed: <strong id="bottom-speed">1×</strong></div>
             </div>
         </div>
+                <div class="status-pill live" id="statusPill">
+                    <span class="status-dot" id="connection-dot"></span>
+                    <span id="connection-text">SIMULATION LIVE</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- ━━━ LEFT SIDEBAR ━━━ -->
+        <div class="sidebar left">
+            <!-- Simulation Controls -->
+            <section class="panel" id="panel-controls">
+                <div class="panel-header">
+                    <span class="panel-title">Simulation Controls</span>
+                </div>
+                <div class="control-group">
+                    <label for="crowd-size">Incoming Crowd Batch</label>
+                    <div class="control-row">
+                        <input type="range" id="crowd-size" min="5" max="200" value="50" step="5">
+                        <span id="crowd-size-val">50</span>
+                    </div>
+                </div>
+                <div class="actions">
+                    <button id="btn-spawn" class="btn primary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="23" y1="11" x2="17" y2="11"/><line x1="20" y1="8" x2="20" y2="14"/></svg>
+                        Spawn
+                    </button>
+                    <button id="btn-clear" class="btn danger">Clear</button>
+                </div>
+            </section>
+
+            <!-- Live Stats -->
+            <section class="panel" id="panel-stats">
+                <div class="panel-header">
+                    <span class="panel-title">Live Metrics</span>
+                    <span class="panel-badge" id="tick-counter">Tick 0</span>
+                </div>
+                <div class="stat-grid four">
+                    <div class="stat-card">
+                        <span class="stat-label">Agents</span>
+                        <span class="stat-value agents" id="stat-agents">0</span>
+                    </div>
+                    <div class="stat-card" id="stat-card-rerouted">
+                        <span class="stat-label">Rerouted</span>
+                        <span class="stat-value rerouted" id="stat-rerouted">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Peak ρ</span>
+                        <span class="stat-value density" id="stat-max-density">0.0</span>
+                    </div>
+                    <div class="stat-card" id="stat-card-bottleneck">
+                        <span class="stat-label">Hazards</span>
+                        <span class="stat-value bottleneck" id="stat-hazards">0</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Zone Density Table -->
+            <section class="panel" id="panel-density">
+                <div class="panel-header">
+                    <span class="panel-title">Zone Density (Top Cells)</span>
+                    <span class="panel-badge" id="avg-density">Avg: 0.0</span>
+                </div>
+                <div style="max-height: 200px; overflow-y: auto;">
+                    <table class="density-table">
+                        <thead>
+                            <tr>
+                                <th>Cell</th>
+                                <th>ρ (p/m²)</th>
+                                <th>LoS</th>
+                                <th>Trend</th>
+                            </tr>
+                        </thead>
+                        <tbody id="density-tbody">
+                            <tr><td colspan="4" style="color: var(--text-dim); text-align: center; padding: 12px;">No density data</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Gate Status -->
+            <section class="panel" id="panel-gates">
+                <div class="panel-header">
+                    <span class="panel-title">Gate Control</span>
+                </div>
+                <div class="gate-list" id="gate-list">
+                    <!-- Dynamic gate items -->
+                </div>
+            </section>
+        </div>
+
+        <!-- ━━━ CENTER: VENUE CANVAS ━━━ -->
+        <div class="center-content">
+            <div class="venue-container">
+                <!-- Layer toggles -->
+                <div class="canvas-overlay">
+                    <button class="overlay-toggle active" id="toggle-heatmap" data-layer="heatmap">Heatmap</button>
+                    <button class="overlay-toggle active" id="toggle-flow" data-layer="flow">Flow</button>
+                    <button class="overlay-toggle active" id="toggle-paths" data-layer="paths">Paths</button>
+                    <button class="overlay-toggle active" id="toggle-agents" data-layer="agents">Agents</button>
+                    <button class="overlay-toggle" id="toggle-labels" data-layer="labels">Labels</button>
+                </div>
+
+                <!-- Legend -->
+                <div class="canvas-legend">
+                    <div class="legend-row"><span class="legend-swatch gate"></span> Gate</div>
+                    <div class="legend-row"><span class="legend-swatch exit"></span> Exit</div>
+                    <div class="legend-row"><span class="legend-swatch concession"></span> Concession</div>
+                    <div class="legend-row"><span class="legend-swatch wall"></span> Wall</div>
+                    <div class="legend-row"><span class="legend-swatch agent"></span> Agent</div>
+                    <div class="legend-row"><span class="legend-swatch rerouted"></span> Rerouted</div>
+                    <div class="legend-row"><span class="legend-swatch bottleneck"></span> Hazard Zone</div>
+                </div>
+
+                <!-- Main Canvas -->
+                <canvas id="venue-canvas" width="800" height="600"></canvas>
+
+                <!-- Minimap -->
+                <div class="minimap">
+                    <canvas id="minimap-canvas" width="160" height="120"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- ━━━ RIGHT SIDEBAR ━━━ -->
+        <div class="sidebar right">
+            <!-- Prediction Timeline -->
+            <section class="panel" id="panel-prediction">
+                <div class="panel-header">
+                    <span class="panel-title">15-Min Forecast</span>
+                    <span class="panel-badge" id="prediction-status">Idle</span>
+                </div>
+                <div class="prediction-timeline" id="prediction-timeline">
+                    <div style="font-size: 0.72rem; color: var(--text-dim); text-align: center; padding: 16px;">
+                        Predictions generate after 5+ agents are active
+                    </div>
+                </div>
+            </section>
+
+            <!-- Active Reroutes -->
+            <section class="panel" id="panel-reroutes">
+                <div class="panel-header">
+                    <span class="panel-title">Active Reroutes</span>
+                    <span class="panel-badge" id="reroute-count">0</span>
+                </div>
+                <div id="reroute-list" style="max-height: 160px; overflow-y: auto;">
+                    <div style="font-size: 0.72rem; color: var(--text-dim); text-align: center; padding: 12px;">
+                        No active reroutes
+                    </div>
+                </div>
+            </section>
+
+            <!-- Digital Signage -->
+            <section class="panel" id="panel-signage">
+                <div class="panel-header">
+                    <span class="panel-title">Digital Signage</span>
+                </div>
+                <div class="sign-list" id="sign-list">
+                    <!-- Dynamic sign items -->
+                </div>
+            </section>
+
+            <!-- Alerts Feed -->
+            <section class="panel" id="panel-alerts">
+                <div class="panel-header">
+                    <span class="panel-title">Alert Feed</span>
+                    <span class="panel-badge" id="alert-count">0</span>
+                </div>
+                <ul id="alert-list" class="alert-list">
+                    <li class="alert-item empty-alert">System nominal. No active hazards detected.</li>
+                </ul>
+            </section>
+        </div>
+
+        <!-- ━━━ BOTTOM BAR ━━━ -->
+        <div class="bottom-bar">
+            <div class="bottom-left">
+                <div class="density-legend">
+                    <span class="density-legend-label">Density</span>
+                    <div>
+                        <div class="density-gradient"></div>
+                        <div class="density-scale">
+                            <span>0</span>
+                            <span>1.0</span>
+                            <span>2.0</span>
+                            <span>3.5+</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="bottom-right">
+                <div class="bottom-stat">Agents: <strong id="bottom-agents">0</strong></div>
+                <div class="bottom-stat">Sim Time: <strong id="bottom-sim-time">0.0s</strong></div>
+                <div class="bottom-stat">Speed: <strong id="bottom-speed">1×</strong></div>
+            </div>
+        </div>
     </div>
 
     <!-- Tooltip (positioned dynamically) -->
     <div class="tooltip" id="tooltip"></div>
 
-    <script src="app.js?v=2"></script>
+    <script src="app.js?v=3"></script>
 </body>
 </html>
