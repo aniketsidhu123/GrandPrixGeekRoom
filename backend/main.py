@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import asyncio
@@ -32,6 +33,14 @@ if not os.path.exists(frontend_dir):
 app.mount("/static", StaticFiles(directory=frontend_dir, html=True), name="static")
 
 sim_engine = SimulationEngine()
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/static/index.html")
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SIMULATION LOOP
