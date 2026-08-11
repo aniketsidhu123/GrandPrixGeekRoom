@@ -172,6 +172,7 @@ class GridState(BaseModel):
 
 class SimulationState(BaseModel):
     agents: List[Agent]
+    real_agents: List[Dict] = []
     bottlenecks: List[Point]
     suggested_routes: Dict[int, List[Point]]
     zone_densities: List[ZoneDensity] = []
