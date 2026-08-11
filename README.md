@@ -29,7 +29,7 @@ Real-time crowd simulation, bottleneck forecasting, and automated rerouting engi
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/GrandPrixGeekRoom.git
+git clone https://github.com/aniketsidhu123/GrandPrixGeekRoom.git
 cd GrandPrixGeekRoom
 
 # Create virtual environment
