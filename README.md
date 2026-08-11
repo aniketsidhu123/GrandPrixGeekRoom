@@ -33,11 +33,11 @@ git clone https://github.com/aniketsidhu123/GrandPrixGeekRoom.git
 cd GrandPrixGeekRoom
 
 # Create virtual environment
-python -m venv backend/venv
+python -m venv .venv
 
 # Activate it
 # Windows:
-backend\venv\Scripts\activate
+.venv\Scripts\activate
 # macOS/Linux:
 source backend/venv/bin/activate
 
