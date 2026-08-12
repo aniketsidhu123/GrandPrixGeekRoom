@@ -8,3 +8,5 @@ opencv-python
 torch
 torchvision
 filterpy
+llama-cpp-python
+huggingface-hub
