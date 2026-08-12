@@ -1,14 +1,8 @@
 @echo off
 echo Starting Crowd Flow Optimiser...
-if not exist ".venv\Scripts\activate.bat" (
-    echo Creating virtual environment...
-    python -m venv .venv
-    call .venv\Scripts\activate.bat
-    echo Installing dependencies...
-    pip install -r requirements.txt
-) else (
-    call .venv\Scripts\activate.bat
+if not exist ".venv\Scripts\python.exe" (
+    echo Please run setup.bat first!
+    exit /b 1
 )
 echo Starting server...
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8001
-pause
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8001

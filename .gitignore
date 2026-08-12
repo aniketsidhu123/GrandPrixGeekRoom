@@ -20,3 +20,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# AI Models & Weights
+weights/
+*.pt
+*.onnx

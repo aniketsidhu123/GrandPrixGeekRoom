@@ -1,0 +1,113 @@
+# Integrate AI Vision Pipeline (YOLO + Depth Models) into Crowd Flow Optimiser
+
+This plan outlines the architecture and implementation steps to upgrade the current synthetic crowd simulation into a hybrid system that ingests real-time video feeds (live or recorded), processes them using specialized YOLO and Depth models, and injects real-world data into the Central Brain (Simulation Engine).
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Hardware Requirements:** Running 3-4 YOLO models and a Depth model concurrently in real-time requires a dedicated GPU (e.g., NVIDIA RTX 3060/4090 or equivalent). If running on CPU only, the framerate will be severely bottlenecked.
+>
+> **Python Dependencies:** We will need to install heavier ML libraries like `torch`, `torchvision`, `ultralytics` (YOLOv8), and `opencv-python`. This will significantly increase the project footprint.
+>
+> Please confirm if the target deployment environment has GPU support (CUDA) and if you are okay with adding these heavy dependencies.
+
+## Open Questions
+
+> [!WARNING]
+> 1. **Model Selection:** Which specific 3-4 YOLO models do you want? (e.g., Model 1: Crowd/Pedestrian, Model 2: Vehicles/Traffic, Model 3: Anomalies/Baggage/Weapons, Model 4: ?). 
+> 2. **Camera Calibration:** To map pixels + depth map values to the simulation grid's X/Y coordinates accurately, we need to know the camera's perspective (bird's eye, angled, etc.). Should we implement an automatic calibration/homography step?
+> 3. **Live vs Synthetic:** Should the system completely replace synthetic agents with real detected agents, or should it be a hybrid (e.g., real agents influence synthetic ones)?
+
+
+Here is a breakdown of the differences, benefits, and drawbacks of both approaches, as well as a recommendation for your **Crowd Flow Optimiser** project.
+
+### 1. Purely Real Agents (Monitoring Mode)
+In this approach, the simulation engine is essentially turned off. The system *only* displays the people and vehicles that the YOLO models currently see in the camera feed.
+
+**Benefits:**
+* **Absolute Ground Truth:** The dashboard reflects exactly what is happening in the real world at that exact millisecond. There is no guesswork.
+* **Highly Performant:** The backend doesn't have to calculate A* pathfinding or complex Social Force Model physics. It just takes coordinates from the Central Hub and draws them on the frontend.
+* **Perfect for Retrospective Analysis:** If you run a recorded video through it, you get a perfect, unbiased map of exactly where bottlenecks formed.
+
+**Drawbacks:**
+* **Blind Spots:** If a camera's view is blocked (occlusion) or doesn't cover a hallway, that area will look completely empty on your dashboard, even if it's full of people in real life.
+* **No Predictive Power:** You cannot forecast what will happen 15 minutes from now, nor can you test "What if 500 more people arrive?" because the system only knows what is currently on screen.
+
+---
+
+### 2. Hybrid (Predictive Digital Twin)
+In this approach, the YOLO models inject real people into the system, but the backend simulation engine keeps running. Real agents act as "anchors"—they influence the flow, pathfinding, and physics of the synthetic (simulated) agents around them.
+
+**Benefits:**
+* **Predictive Forecasting:** This is where the magic happens. You use the *real* YOLO data as your current starting state, and then let the synthetic simulation run forward in time faster than real-time to predict bottlenecks *before* they happen.
+* **Testing Scenarios (What-Ifs):** You can inject the live real-world state, and then digitally close a gate on your dashboard to see how the simulated crowd reroutes based on the current real-world density.
+* **Filling the Gaps:** Synthetic agents can simulate the flow of crowds into areas where you don't have camera coverage, giving you a complete map of the venue.
+
+**Drawbacks:**
+* **High Complexity:** Merging real data with simulated physics is difficult. You have to handle edge cases (e.g., what happens if the simulation expects an agent to move left, but the live YOLO feed shows the real person moving right?).
+* **Performance Heavy:** You are running intensive AI inference (YOLO/Depth) *and* heavy physics calculations simultaneously.
+
+---
+
+### Which is better for your project?
+
+**Ultimately, the Hybrid approach is much better for your project.** 
+Since your project is called an "Optimiser" and features "bottleneck forecasting" and "automated rerouting", you *need* the synthetic simulation to predict the future and test gate closures. If you only use Real Agents, it becomes just a standard security camera dashboard rather than a smart digital twin.
+
+**My Recommended Engineering Strategy:**
+We should build it in two phases:
+1. **Phase 1 (Purely Real):** We first build the pipeline to ingest YOLO/Depth data and just draw it on the map. This proves the AI integration works and is fast.
+2. **Phase 2 (Hybrid Merge):** Once Phase 1 is stable, we update the `SimulationEngine` so that it uses the live AI data to continuously "seed" and correct the synthetic physics engine for future predictions.
+
+Does this strategy sound good to you? If so, we can update the plan to reflect this phased approach and begin executing Phase 1!
+
+alright go with this phased approach and for question 1: model 4 will see the flow of things like which thing is going where this can help to predict via the central hub(vision aggregator)
+and for question 2:yes implement an automatic calibration/homography step
+
+
+## Proposed Architecture
+
+To ensure high performance and prevent blocking the FastAPI server, the vision pipeline will use a multi-process architecture.
+
+### 1. Vision Ingestion Layer (`backend/vision/`)
+A new dedicated module for handling video streams and AI inference.
+
+#### [NEW] `backend/vision/pipeline.py`
+- Handles reading from RTSP streams, Webcams, or MP4 files using OpenCV (`cv2.VideoCapture`).
+- Dispatches frames to the inference models.
+
+#### [NEW] `backend/vision/models.py`
+Wrappers for the AI models using TensorRT or ONNX for speed:
+- **YOLOWorker:** Multiprocessing workers that run specific YOLO models (e.g., `yolov8n-crowdhuman.pt`, `yolov8n.pt`).
+- **DepthWorker:** Multiprocessing worker running a monocular depth model (e.g., `Depth-Anything-V2` or `MiDaS`).
+
+#### [NEW] `backend/vision/aggregator.py` (The Central Hub)
+- A synchronization barrier that collects the bounding boxes from all YOLO workers and the depth map from the Depth worker for the *same frame*.
+- **Data Fusion:** Uses the bounding box bottom-center pixel (where feet touch the ground) and samples the depth map to calculate distance.
+- Applies a Perspective Transform (Homography) to convert (u, v, depth) to grid coordinates (x, y).
+
+### 2. Backend Integration
+
+#### [MODIFY] `backend/main.py`
+- Add API endpoints to start/stop the video pipeline (`/api/vision/start`, `/api/vision/stop`).
+- Start the Vision Aggregator process in the background.
+
+#### [MODIFY] `backend/simulation.py`
+- Add an `ingest_real_data(detected_objects)` method.
+- Update the `SimulationEngine` state with real agents. Real agents will be visually distinct on the frontend.
+- Allow real agents to influence the density heatmap and bottleneck forecasting.
+
+#### [MODIFY] `requirements.txt`
+- Add `ultralytics`, `torch`, `opencv-python`, `onnxruntime-gpu`.
+
+## Verification Plan
+
+### Automated/Unit Tests
+- Test the Vision Aggregator with a mock frame to ensure all 4 multiprocessing workers return data and sync correctly without deadlocks.
+- Test the coordinate mapping function mapping `(pixel_x, pixel_y, depth)` to `(grid_x, grid_y)`.
+
+### Manual Verification
+- Provide an MP4 video of a crowd/traffic scenario.
+- Verify that the frontend canvas correctly displays agents moving in sync with the video feed.
+- Ensure the FastAPI server remains responsive (WebSocket latency < 50ms) while inference is running.
+- Verify framerate of the vision pipeline (target: 15-30 FPS).
