@@ -8,7 +8,7 @@ import asyncio
 import os
 import json
 
-from .simulation import SimulationEngine
+from .simulation import SimulationEngine, TICK_DURATION_SEC
 from .vision.pipeline import VisionPipeline
 
 app = FastAPI(
@@ -66,10 +66,16 @@ async def startup_event():
 
 async def simulation_loop():
     sim_engine.running = True
+    loop = asyncio.get_event_loop()
     while sim_engine.running:
         if sim_engine.sim_speed > 0:
-            sim_engine.update()
-            await asyncio.sleep(max(0.1, 0.5 / sim_engine.sim_speed))
+            # The physics substeps and the 15-minute forecast are CPU-bound.
+            # Running them in a worker thread keeps the WebSocket broadcasts
+            # flowing instead of stalling every time a forecast fires.
+            await loop.run_in_executor(None, sim_engine.update)
+            # Each tick represents TICK_DURATION_SEC of simulated time, so the
+            # wall-clock gap between ticks is what the speed multiplier scales.
+            await asyncio.sleep(max(0.02, TICK_DURATION_SEC / sim_engine.sim_speed))
         else:
             await asyncio.sleep(0.5)
 
@@ -334,6 +340,10 @@ async def get_stats():
         "sim_time": sim_engine.sim_time,
         "sim_speed": sim_engine.sim_speed,
         "alert_count": len(sim_engine.alerts),
+        "clock_hour": round(sim_engine.arrival_model.hour_at(sim_engine.sim_time), 2),
+        "ingress_per_hour": round(
+            sim_engine.arrival_model.rate_at(sim_engine.sim_time) * 3600, 1
+        ) if sim_engine.auto_ingress else 0.0,
     }
 
 class GateControlRequest(BaseModel):
@@ -345,6 +355,65 @@ async def actuate_gate(gate_id: str, request: GateControlRequest):
     """Manually control a gate."""
     sim_engine.actuate_gate(gate_id, request.action, request.rate)
     return {"status": "success", "gate_id": gate_id, "action": request.action}
+
+class IngressConfigRequest(BaseModel):
+    """All fields optional — only what is supplied gets changed."""
+    enabled: Optional[bool] = None
+    archetype: Optional[str] = None      # "gate" | "concourse" | "food"
+    attendance: Optional[int] = None     # people across the full 24h curve
+    start_hour: Optional[float] = None   # wall-clock hour the sim starts at
+    weekend: Optional[bool] = None
+    scale: Optional[float] = None        # intensity multiplier for tuning
+
+
+@app.get("/api/ingress")
+async def get_ingress():
+    """Current arrival model, including which sensor profile it came from."""
+    model = sim_engine.arrival_model
+    hour = model.hour_at(sim_engine.sim_time)
+    return {
+        "enabled": sim_engine.auto_ingress,
+        "config": model.describe(),
+        "clock_hour": round(hour, 2),
+        "current_rate_per_sec": round(model.rate_at(sim_engine.sim_time), 3),
+        "current_rate_per_hour": round(model.rate_at(sim_engine.sim_time) * 3600, 1),
+        "curve": model.curve,
+    }
+
+
+@app.post("/api/ingress")
+async def set_ingress(request: IngressConfigRequest):
+    """Reconfigure the arrival model. Rebuilds it when the profile changes."""
+    from .ingress import ArrivalModel
+
+    if request.enabled is not None:
+        sim_engine.auto_ingress = request.enabled
+
+    model = sim_engine.arrival_model
+    needs_rebuild = any(
+        v is not None for v in (request.archetype, request.weekend)
+    )
+
+    if needs_rebuild:
+        model = ArrivalModel(
+            archetype=request.archetype or model.archetype,
+            attendance=request.attendance or model.attendance,
+            start_hour=model.start_hour if request.start_hour is None else request.start_hour,
+            weekend=model.weekend if request.weekend is None else request.weekend,
+            scale=model.scale if request.scale is None else request.scale,
+        )
+        sim_engine.arrival_model = model
+        sim_engine.prediction_engine.set_arrival_model(model, sim_engine.gates)
+    else:
+        if request.attendance is not None:
+            model.attendance = request.attendance
+        if request.start_hour is not None:
+            model.start_hour = request.start_hour
+        if request.scale is not None:
+            model.scale = request.scale
+
+    return {"status": "success", "enabled": sim_engine.auto_ingress, **model.describe()}
+
 
 class SpeedControlRequest(BaseModel):
     speed: float

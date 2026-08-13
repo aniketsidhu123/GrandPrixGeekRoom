@@ -17,6 +17,13 @@ from .pathfinding import a_star_search, compute_alternative_routes
 from .physics import SocialForceModel
 from .density import DensityAnalyzer
 from .prediction import PredictionEngine
+from .ingress import ArrivalModel
+
+
+# Simulated seconds advanced by one engine tick. The physics integrator runs at
+# a finer dt, so a tick executes several substeps to cover this span — keeping
+# the displayed clock honest about how much movement actually happened.
+TICK_DURATION_SEC = 0.5
 
 
 class SimulationEngine:
@@ -35,8 +42,10 @@ class SimulationEngine:
         self.sim_speed = 1.0       # Speed multiplier
         self.tick_count = 0
         
-        # Physics engine
+        # Physics engine. One tick covers TICK_DURATION_SEC of simulated time,
+        # which takes several integrator substeps at dt=0.1s.
         self.sfm = SocialForceModel(dt=0.1)
+        self.physics_substeps = max(1, int(round(TICK_DURATION_SEC / self.sfm.dt)))
         self.walls_cache = self._get_walls()
         
         # Density analyzer
@@ -79,7 +88,18 @@ class SimulationEngine:
         
         # Initialize gates on grid
         self._setup_venue_elements()
-        
+
+        # Arrival model — real hourly ingress curve measured from pedestrian
+        # sensors, used both to drive live spawning and to tell the forecaster
+        # how many people are still on their way in.
+        self.arrival_model = ArrivalModel(
+            archetype="gate",
+            attendance=30_000,
+            start_hour=16.0,   # simulation opens at 16:00, pre-event build-up
+        )
+        self.auto_ingress = True
+        self.prediction_engine.set_arrival_model(self.arrival_model, self.gates)
+
         # Active reroute tracking
         self.active_reroutes: List[RerouteRecommendation] = []
         
@@ -196,8 +216,13 @@ class SimulationEngine:
             
             self.agents.append(agent)
             spawned += 1
-        # Update ingress estimate for prediction engine
-        
+
+        # Record actual admissions (may be below `count` when gates are closed)
+        # so the fallback ingress estimate reflects reality.
+        self.prediction_engine.update_ingress_estimate(spawned)
+        return spawned
+
+
     def ingest_real_data(self, real_agents_data: List[Dict]):
         """
         Phase 1: Purely Real Update.
@@ -214,10 +239,20 @@ class SimulationEngine:
     def update(self):
         """Main simulation tick."""
         self.tick_count += 1
-        self.sim_time += 0.5 * self.sim_speed  # 0.5s per tick at 1× speed
-        
+        # The clock advances by the world time this tick actually simulates.
+        # sim_speed controls how often ticks run in wall-clock time, not how
+        # much simulated time each one represents.
+        self.sim_time += TICK_DURATION_SEC
+
+        # 0. Ingress — admit arrivals from the measured hourly curve
+        if self.auto_ingress:
+            arrivals = self.arrival_model.draw_arrivals(self.sim_time, TICK_DURATION_SEC)
+            if arrivals:
+                self.spawn_agents(arrivals)
+
         # 1. Update positions using Social Force Model
-        self.sfm.update_positions(self.agents, self.walls_cache, self.real_agents)
+        for _ in range(self.physics_substeps):
+            self.sfm.update_positions(self.agents, self.walls_cache, self.real_agents)
         
         # 2. Check path progress and goals
         for agent in self.agents:
@@ -286,7 +321,8 @@ class SimulationEngine:
         if self.tick_count % self.prediction_interval == 0 and len(self.agents) > 5:
             self.predictions = self.prediction_engine.forecast(
                 self.agents, self.grid, self.walls_cache,
-                self.gates, self.exits
+                self.gates, self.exits,
+                sim_time_sec=self.sim_time,
             )
     
     def _handle_rerouting(self, raw_density: np.ndarray):
