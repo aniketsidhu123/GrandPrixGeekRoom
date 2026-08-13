@@ -49,7 +49,7 @@ class ModelManager:
 
         if self._device == "cuda":
             self._gpu_name = torch.cuda.get_device_name(0)
-            self._total_vram_mb = round(torch.cuda.get_device_properties(0).total_mem / (1024 ** 2), 1)
+            self._total_vram_mb = round(torch.cuda.get_device_properties(0).total_memory / (1024 ** 2), 1)
             logger.info(f"GPU detected: {self._gpu_name} ({self._total_vram_mb} MB VRAM)")
         else:
             logger.warning("No CUDA GPU detected. All models will run on CPU.")
