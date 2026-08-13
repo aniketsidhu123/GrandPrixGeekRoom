@@ -1,70 +1,66 @@
 # Crowd Flow Optimiser
 
-Real-time crowd simulation, bottleneck forecasting, and automated rerouting engine. A predictive digital twin for venue crowd management.
+Real-time crowd simulation, AI-powered vision pipeline, bottleneck forecasting, and automated rerouting engine. A predictive digital twin for venue crowd management.
 
 ## Features
 
-- **Real-time crowd simulation** with Social Force Model physics
-- **Density heatmap** with Fruin Level-of-Service classification
-- **Bottleneck detection** and automated rerouting
-- **15-minute predictive forecasting**
-- **Gate control** with throttling and closure
-- **Digital signage** with dynamic directional updates
-- **Live alert feed** with severity levels
-- **Multi-layer canvas rendering** (heatmap, flow vectors, paths, agents)
+- **AI Vision Pipeline:** End-to-end video analysis using YOLOv8 (Crowd, Traffic, Anomalies, Flow Seg) and MiDaS (Depth Estimation).
+- **Vision Language Model (VLM):** Integrated SmolVLM2 (2.2B) for high-level scene understanding and safety hazard descriptions.
+- **Hardware Acceleration:** Native PyTorch CUDA 12.8 support and GPU-compiled `llama-cpp-python` for fast local inference.
+- **Real-time Crowd Simulation:** Social Force Model physics mapping 2D camera coordinates to a 3D grid layout.
+- **Density Heatmap & Analytics:** Fruin Level-of-Service classification and dynamic directional updates.
+- **15-Minute Predictive Forecasting:** Automated bottleneck detection and proactive rerouting.
 
 ## Tech Stack
 
-- **Backend:** Python, FastAPI, WebSockets, NumPy
+- **Backend:** Python, FastAPI, WebSockets, PyTorch, ultralytics (YOLO), llama-cpp-python
 - **Frontend:** Vanilla HTML/CSS/JS with Canvas API
-- **Simulation:** A* pathfinding, Social Force Model, density analysis
+- **AI Models:** YOLOv8 (Nano/Small/Medium), MiDaS v2.1, SmolVLM2-2.2B-Instruct (GGUF)
 
 ## Getting Started
 
 ### Prerequisites
 
-- Python 3.10+
+- **Windows OS**
+- **Python 3.10+**
+- **NVIDIA GPU** (Recommended: 8GB+ VRAM, e.g., RTX 4060)
+- **CUDA Toolkit** and **C++ Build Tools** (Required for GPU acceleration of the VLM)
 
-### Installation
+### Installation & Setup
 
-```bash
-# Clone the repository
-git clone https://github.com/aniketsidhu123/GrandPrixGeekRoom.git
-cd GrandPrixGeekRoom
+We provide automated batch scripts for Windows to handle virtual environments, dependencies, and downloading all AI model weights (~1.2GB).
 
-# Create virtual environment
-python -m venv .venv
+1. Clone the repository:
+   ```cmd
+   git clone https://github.com/aniketsidhu123/GrandPrixGeekRoom.git
+   cd GrandPrixGeekRoom
+   ```
 
-# Activate it
-# Windows:
-.\.venv\Scripts\activate
-# macOS/Linux:
-source backend/venv/bin/activate
+2. Run the automated setup script. This will create `.venv`, install PyTorch with CUDA, compile `llama-cpp-python` for GPU, and download all models to the `weights/` directory:
+   ```cmd
+   .\setup.bat
+   ```
 
-# Install dependencies
-pip install -r requirements.txt
+### Running the Server
+
+Once setup is complete, launch the backend and frontend simultaneously:
+
+```cmd
+.\start.bat
 ```
 
-### Running
-
-```bash
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Open **http://localhost:8000/static/index.html** in your browser.
+The terminal will display the Uvicorn server logs, and it will automatically open the dashboard in your default browser at `http://localhost:8001/static/index.html`.
 
 ## Usage
 
-1. Click **Spawn** to add agents to the simulation
-2. Use the **speed controls** (1×, 2×, 5×, 10×) to adjust simulation speed
-3. Toggle **visualization layers** (Heatmap, Flow, Paths, Agents, Labels)
-4. Monitor **density metrics**, **alerts**, and **predictions** in the sidebars
-5. Control **gates** to throttle or close entry points
+### 1. AI Vision Pipeline
+- Click **Add Files** or **Add Folder** to select local video files (`.mp4`, `.avi`, etc.)
+- Click **Scan** to process the videos through the AI pipeline.
+- The dashboard will display live FPS, Latency, VRAM usage, and active models.
+- The VLM will periodically generate text-based scene intelligence reports.
 
-## API Docs
-
-Interactive API documentation is available at **http://localhost:8000/docs** when the server is running.
-
-## License
-
-MIT
+### 2. Simulation & Digital Twin
+- Click **Spawn** to add synthetic agents to the simulation manually.
+- Use the **speed controls** (1×, 2×, 5×, 10×) to adjust simulation time.
+- Toggle visualization layers (Heatmap, Flow, Paths, Agents, Labels).
+- Monitor density metrics, alerts, and 15-minute predictions in the sidebars.
