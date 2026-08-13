@@ -12,6 +12,7 @@ let ws;
 let gridConfig = null;
 let simulationState = null;
 let heatmapData = null;
+let visionData = null;
 let prevAgentPositions = {};
 let animationFrame = 0;
 
@@ -153,6 +154,9 @@ function initWebSocket() {
             simulationState = data.state;
             heatmapData = data.heatmap;
             updateAllUI();
+        } else if (data.type === 'vision_update') {
+            visionData = data.data;
+            updateVisionDashboard(visionData);
         }
     };
 
@@ -864,29 +868,7 @@ canvas.addEventListener('mousemove', (e) => {
         panY = e.clientY - dragStartY;
     }
 
-    // Vision Pipeline Integration
-btnVisionStart.addEventListener('click', () => {
-    fetch('/api/vision/start', { method: 'POST' })
-        .then(r => r.json())
-        .then(data => {
-            visionStatus.textContent = 'Running';
-            visionStatus.style.backgroundColor = '#10b981';
-            visionStatus.style.color = '#fff';
-        })
-        .catch(err => console.error(err));
-});
-
-btnVisionStop.addEventListener('click', () => {
-    fetch('/api/vision/stop', { method: 'POST' })
-        .then(r => r.json())
-        .then(data => {
-            visionStatus.textContent = 'Stopped';
-            visionStatus.style.backgroundColor = '#64748b';
-        })
-        .catch(err => console.error(err));
-});
-
-// Tooltip logic: show density info on hover
+    // Tooltip logic: show density info on hover
     if (gridConfig && heatmapData && heatmapData.heatmap) {
         const rect = canvas.getBoundingClientRect();
         const mx = (e.clientX - rect.left - panX) / zoomLevel;
@@ -928,6 +910,272 @@ canvas.addEventListener('mouseleave', () => {
     canvas.style.cursor = 'grab';
     tooltip.classList.remove('visible');
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// VISION PIPELINE CONTROLS
+// ═══════════════════════════════════════════════════════════════════
+
+btnVisionStart.addEventListener('click', () => {
+    fetch('/api/vision/start', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            visionStatus.textContent = 'Live';
+            visionStatus.style.backgroundColor = '#10b981';
+            visionStatus.style.color = '#fff';
+        })
+        .catch(err => console.error(err));
+});
+
+btnVisionStop.addEventListener('click', () => {
+    fetch('/api/vision/stop', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            visionStatus.textContent = 'Stopped';
+            visionStatus.style.backgroundColor = '';
+            visionStatus.style.color = '';
+        })
+        .catch(err => console.error(err));
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// VIDEO FILE PICKER & SCAN
+// ═══════════════════════════════════════════════════════════════════
+
+let selectedVideoPaths = [];
+
+function updateFileListUI() {
+    const listEl = document.getElementById('video-file-list');
+    if (!listEl) return;
+    if (selectedVideoPaths.length === 0) {
+        listEl.innerHTML = '<span style="color:var(--text-dim);">No files selected</span>';
+        return;
+    }
+    let html = '';
+    selectedVideoPaths.forEach((p, i) => {
+        const name = p.split(/[\\/]/).pop();
+        const isFolder = !name.includes('.');
+        const icon = isFolder ? '📂' : '🎬';
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);">`;
+        html += `<span style="color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;" title="${p}">${icon} ${name}</span>`;
+        html += `<span style="color:var(--text-dim);cursor:pointer;padding:0 4px;" onclick="removeVideoPath(${i})">✕</span>`;
+        html += `</div>`;
+    });
+    listEl.innerHTML = html;
+}
+
+// Make removeVideoPath available globally
+window.removeVideoPath = function(index) {
+    selectedVideoPaths.splice(index, 1);
+    updateFileListUI();
+};
+
+// Pick Files button
+const btnPickFiles = document.getElementById('btn-pick-files');
+if (btnPickFiles) {
+    btnPickFiles.addEventListener('click', () => {
+        btnPickFiles.textContent = '⏳ Opening...';
+        fetch('/api/vision/pick-files')
+            .then(r => r.json())
+            .then(data => {
+                if (data.paths && data.paths.length > 0) {
+                    // Add new paths (avoid duplicates)
+                    data.paths.forEach(p => {
+                        if (!selectedVideoPaths.includes(p)) {
+                            selectedVideoPaths.push(p);
+                        }
+                    });
+                    updateFileListUI();
+                }
+                btnPickFiles.textContent = '📁 Add Files';
+            })
+            .catch(err => {
+                console.error(err);
+                btnPickFiles.textContent = '📁 Add Files';
+            });
+    });
+}
+
+// Pick Folder button
+const btnPickFolder = document.getElementById('btn-pick-folder');
+if (btnPickFolder) {
+    btnPickFolder.addEventListener('click', () => {
+        btnPickFolder.textContent = '⏳ Opening...';
+        fetch('/api/vision/pick-folder')
+            .then(r => r.json())
+            .then(data => {
+                if (data.path) {
+                    if (!selectedVideoPaths.includes(data.path)) {
+                        selectedVideoPaths.push(data.path);
+                    }
+                    updateFileListUI();
+                }
+                btnPickFolder.textContent = '📂 Add Folder';
+            })
+            .catch(err => {
+                console.error(err);
+                btnPickFolder.textContent = '📂 Add Folder';
+            });
+    });
+}
+
+// Clear button
+const btnClearFiles = document.getElementById('btn-clear-files');
+if (btnClearFiles) {
+    btnClearFiles.addEventListener('click', () => {
+        selectedVideoPaths = [];
+        updateFileListUI();
+        const pathInput = document.getElementById('video-path-input');
+        if (pathInput) pathInput.value = '';
+    });
+}
+
+// Scan button
+const btnScanVideo = document.getElementById('btn-scan-video');
+const videoPathInput = document.getElementById('video-path-input');
+if (btnScanVideo) {
+    btnScanVideo.addEventListener('click', () => {
+        // Merge selected paths with any manually typed paths
+        let allPaths = [...selectedVideoPaths];
+        if (videoPathInput && videoPathInput.value.trim()) {
+            const manual = videoPathInput.value.trim().split(',').map(p => p.trim()).filter(Boolean);
+            manual.forEach(p => {
+                if (!allPaths.includes(p)) allPaths.push(p);
+            });
+        }
+
+        if (allPaths.length === 0) {
+            alert('Please select video files or folders first.');
+            return;
+        }
+
+        btnScanVideo.textContent = '⏳ Loading...';
+        fetch('/api/vision/scan-video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: allPaths }),
+        })
+            .then(r => r.json())
+            .then(data => {
+                visionStatus.textContent = 'Scanning';
+                visionStatus.style.backgroundColor = '#f59e0b';
+                visionStatus.style.color = '#000';
+                btnScanVideo.textContent = '▶ Scan';
+            })
+            .catch(err => {
+                console.error(err);
+                btnScanVideo.textContent = '▶ Scan';
+            });
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// VISION DASHBOARD UPDATE
+// ═══════════════════════════════════════════════════════════════════
+
+function updateVisionDashboard(data) {
+    if (!data) return;
+
+    // FPS & Latency
+    const fpsEl = document.getElementById('vision-fps');
+    const latencyEl = document.getElementById('vision-latency');
+    const modeEl = document.getElementById('vision-mode');
+    if (fpsEl) fpsEl.textContent = data.fps || '0';
+    if (latencyEl) latencyEl.textContent = (data.latency_ms || 0) + 'ms';
+    if (modeEl) modeEl.textContent = data.mode || 'idle';
+
+    // Detection counts
+    const detEl = document.getElementById('vision-detections');
+    if (detEl && data.detections) {
+        let html = '';
+        for (const [task, count] of Object.entries(data.detections)) {
+            const colorMap = { crowd: '#3b82f6', traffic: '#f59e0b', anomaly: '#ef4444', flow: '#8b5cf6' };
+            const color = colorMap[task] || '#64748b';
+            html += `<div class="vision-det-row">`;
+            html += `<span class="vision-det-label" style="color:${color}">● ${task}</span>`;
+            html += `<span class="vision-det-count">${count}</span></div>`;
+        }
+        detEl.innerHTML = html || '<div style="color:var(--text-dim);font-size:0.72rem;">No detections</div>';
+    }
+
+    // Video progress
+    const progressEl = document.getElementById('vision-progress');
+    if (progressEl && data.total_frames > 0) {
+        const pct = Math.round((data.frame / data.total_frames) * 100);
+        progressEl.style.width = pct + '%';
+        progressEl.parentElement.style.display = 'block';
+    } else if (progressEl) {
+        progressEl.parentElement.style.display = data.mode === 'video' || data.mode === 'batch' ? 'block' : 'none';
+    }
+
+    // VLM Scene Analysis
+    const vlmEl = document.getElementById('vlm-analysis');
+    if (vlmEl && data.vlm_analysis) {
+        const a = data.vlm_analysis;
+        const riskColors = { none: '#22c55e', low: '#4ade80', moderate: '#f59e0b', high: '#ef4444' };
+        const densityColors = { low: '#22c55e', moderate: '#f59e0b', high: '#f97316', critical: '#ef4444' };
+        let html = `<div class="vlm-row"><span>Density</span><span style="color:${densityColors[a.crowd_density] || '#64748b'}">${a.crowd_density || '—'}</span></div>`;
+        html += `<div class="vlm-row"><span>People Est.</span><span>${a.estimated_people ?? '—'}</span></div>`;
+        html += `<div class="vlm-row"><span>Stampede Risk</span><span style="color:${riskColors[a.stampede_risk] || '#64748b'}">${a.stampede_risk || '—'}</span></div>`;
+        if (a.safety_hazards && a.safety_hazards.length > 0) {
+            html += `<div class="vlm-hazards">⚠ ${a.safety_hazards.join(', ')}</div>`;
+        }
+        if (a.summary) {
+            html += `<div class="vlm-summary">${a.summary}</div>`;
+        }
+        vlmEl.innerHTML = html;
+    }
+
+    // Model & VRAM status
+    const modelEl = document.getElementById('vision-model-status');
+    const vramStatusEl = document.getElementById('vision-vram-status');
+    
+    if (data.model_manager) {
+        const mm = data.model_manager;
+        
+        if (modelEl && mm.models) {
+            let html = '';
+            for (const [name, info] of Object.entries(mm.models)) {
+                const icon = info.loaded ? '●' : '○';
+                const color = info.loaded ? '#22c55e' : '#64748b';
+                const title = info.loaded ? `VRAM: ${info.vram_mb}MB | Latency: ${info.last_inference_ms}ms` : 'Not loaded';
+                html += `<span title="${title}" style="color:${color};margin-right:8px;font-size:0.7rem;cursor:help;">${icon} ${name}</span>`;
+            }
+            modelEl.innerHTML = html;
+        }
+        
+        if (vramStatusEl) {
+            const spanEl = vramStatusEl.querySelector('span');
+            const barEl = document.getElementById('vram-bar');
+            
+            if (mm.gpu_available) {
+                spanEl.textContent = `VRAM: ${mm.used_vram_mb}MB / ${mm.total_vram_mb}MB`;
+                const pct = Math.min(100, Math.round((mm.used_vram_mb / mm.total_vram_mb) * 100));
+                if (barEl) {
+                    barEl.style.width = pct + '%';
+                    barEl.style.backgroundColor = pct > 90 ? 'var(--los-critical)' : pct > 75 ? 'var(--los-d)' : 'var(--accent-purple)';
+                }
+            } else {
+                spanEl.textContent = 'CPU Mode (No GPU)';
+                if (barEl) barEl.style.width = '0%';
+            }
+        }
+    }
+
+    // Update vision status badge
+    if (data.mode === 'idle') {
+        visionStatus.textContent = 'Stopped';
+        visionStatus.style.backgroundColor = '';
+        visionStatus.style.color = '';
+    } else if (data.mode === 'live') {
+        visionStatus.textContent = 'Live';
+        visionStatus.style.backgroundColor = '#10b981';
+        visionStatus.style.color = '#fff';
+    } else if (data.mode === 'video' || data.mode === 'batch') {
+        visionStatus.textContent = `Scanning ${data.video_name || ''}`;
+        visionStatus.style.backgroundColor = '#f59e0b';
+        visionStatus.style.color = '#000';
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // INIT

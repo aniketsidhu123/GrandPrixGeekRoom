@@ -1027,3 +1027,95 @@ input[type="range"]::-webkit-slider-thumb:hover {
         min-width: 260px;
     }
 }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   VISION DASHBOARD STYLES
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* Video scan progress bar */
+.vision-progress-bar {
+    height: 4px;
+    background: var(--bg-card);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.vision-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+/* Detection breakdown rows */
+.vision-det-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    font-size: 0.75rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+}
+
+.vision-det-row:last-child {
+    border-bottom: none;
+}
+
+.vision-det-label {
+    font-weight: 500;
+    text-transform: capitalize;
+}
+
+.vision-det-count {
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* VLM Scene Analysis */
+.vlm-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+}
+
+.vlm-row:last-child {
+    border-bottom: none;
+}
+
+.vlm-row span:first-child {
+    color: var(--text-tertiary);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.vlm-row span:last-child {
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+}
+
+.vlm-hazards {
+    padding: 6px 8px;
+    margin-top: 6px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 6px;
+    font-size: 0.72rem;
+    color: #fca5a5;
+    line-height: 1.4;
+}
+
+.vlm-summary {
+    padding: 6px 0;
+    margin-top: 4px;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    font-style: italic;
+}

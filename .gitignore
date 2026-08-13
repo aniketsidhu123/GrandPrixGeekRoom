@@ -1,27 +1,66 @@
-# Python
+# Python bytecode / caches
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
 
-# Virtual environment
+# Virtual environments
 .venv/
+venv/
+env/
+ENV/
 .env
+.env.*
 
-# IDE
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# IDE / editor
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
-# OS
+# OS files
 Thumbs.db
 .DS_Store
+Desktop.ini
 
-# Logs
+# Logs / temp files
 *.log
+*.tmp
+*.temp
 
-# AI Models & Weights
+# Jupyter / notebooks
+.ipynb_checkpoints/
+
+# Local data / generated output
+*.sqlite3
+*.db
+coverage.xml
+.htmlcov/
+
+# AI / model weights and large binaries
 weights/
 *.pt
+*.pth
 *.onnx
+*.bin
+*.gguf
+*.ggml
+*.safetensors
+
+# Local runtime artifacts
+backend/.cache/
+frontend/.cache/

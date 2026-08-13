@@ -39,6 +39,15 @@ sim_engine = SimulationEngine()
 vision_pipeline = VisionPipeline(grid_width=sim_engine.width, grid_height=sim_engine.height)
 vision_pipeline.on_agents_detected = sim_engine.ingest_real_data
 
+# Vision update state (pushed to frontend via WebSocket)
+latest_vision_update = {}
+
+def _handle_vision_update(data: dict):
+    global latest_vision_update
+    latest_vision_update = data
+
+vision_pipeline.on_vision_update = _handle_vision_update
+
 @app.get("/")
 async def root():
     return RedirectResponse(url="/static/index.html")
@@ -163,9 +172,20 @@ async def broadcast_state():
         sleep_time = max(0.1, 0.5 / sim_engine.sim_speed) if sim_engine.sim_speed > 0 else 0.5
         await asyncio.sleep(sleep_time)
 
+async def broadcast_vision_state():
+    """Broadcast vision pipeline metrics to all connected clients."""
+    while True:
+        if manager.active_connections and latest_vision_update:
+            await manager.broadcast({
+                "type": "vision_update",
+                "data": latest_vision_update,
+            })
+        await asyncio.sleep(0.5)
+
 @app.on_event("startup")
 async def start_broadcaster():
     asyncio.create_task(broadcast_state())
+    asyncio.create_task(broadcast_vision_state())
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # REST API ENDPOINTS
@@ -193,18 +213,107 @@ async def ingest_vision_data(payload: VisionIngestionPayload):
 
 @app.post("/api/vision/start")
 async def start_vision_pipeline():
-    """Start the real-time AI vision pipeline."""
+    """Start the real-time AI vision pipeline (webcam)."""
     if not vision_pipeline.running:
-        # Initialize models (this blocks, in prod maybe background task)
-        vision_pipeline.initialize()
+        vision_pipeline.set_source(0)
+        # Run blocking model loading in a thread so we don't freeze the server
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, vision_pipeline.initialize)
         asyncio.create_task(vision_pipeline.start())
-    return {"status": "started"}
+    return {"status": "started", "mode": "live"}
 
 @app.post("/api/vision/stop")
 async def stop_vision_pipeline():
     """Stop the real-time AI vision pipeline."""
     vision_pipeline.stop()
     return {"status": "stopped"}
+
+class VideoScanRequest(BaseModel):
+    paths: List[str]  # List of file paths and/or folder paths
+
+@app.post("/api/vision/scan-video")
+async def scan_video(request: VideoScanRequest):
+    """
+    Scan one or more video files, or entire folders of videos.
+    Pass file paths and/or folder paths. Folders will be scanned recursively
+    for .mp4, .avi, .mkv, .mov, .wmv, .flv, .webm files.
+    """
+    if vision_pipeline.running:
+        vision_pipeline.stop()
+    # Run blocking model loading in a thread
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, vision_pipeline.initialize)
+    asyncio.create_task(vision_pipeline.scan_videos(request.paths))
+    return {"status": "scanning", "paths": request.paths}
+
+@app.get("/api/vision/status")
+async def vision_status():
+    """Return current vision pipeline status."""
+    from .vision.model_manager import model_manager
+    return {
+        "running": vision_pipeline.running,
+        "mode": vision_pipeline.mode,
+        "fps": vision_pipeline.fps,
+        "frame": vision_pipeline.frame_count,
+        "total_frames": vision_pipeline.total_frames,
+        "vlm_analysis": vision_pipeline.last_vlm_analysis,
+        "model_manager": model_manager.get_status(),
+    }
+
+@app.get("/api/vision/pick-files")
+async def pick_files():
+    """Open a native file picker dialog and return selected video file paths."""
+    import threading
+    result = {"paths": []}
+
+    def _pick():
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            files = filedialog.askopenfilenames(
+                title="Select Video Files",
+                filetypes=[
+                    ("Video files", "*.mp4 *.avi *.mkv *.mov *.wmv *.flv *.webm"),
+                    ("All files", "*.*"),
+                ],
+            )
+            result["paths"] = list(files)
+            root.destroy()
+        except Exception as e:
+            print(f"File picker error: {e}")
+
+    # Run tkinter in a thread (it needs its own thread on Windows)
+    t = threading.Thread(target=_pick)
+    t.start()
+    t.join(timeout=120)  # 2 min timeout
+    return result
+
+@app.get("/api/vision/pick-folder")
+async def pick_folder():
+    """Open a native folder picker dialog and return the selected folder path."""
+    import threading
+    result = {"path": ""}
+
+    def _pick():
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            folder = filedialog.askdirectory(title="Select Video Folder")
+            result["path"] = folder
+            root.destroy()
+        except Exception as e:
+            print(f"Folder picker error: {e}")
+
+    t = threading.Thread(target=_pick)
+    t.start()
+    t.join(timeout=120)
+    return result
 
 @app.get("/prediction")
 async def get_prediction():
