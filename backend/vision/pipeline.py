@@ -77,16 +77,28 @@ class VisionPipeline:
         self._current_video_name = ""
 
     def initialize(self):
-        """Loads all models into memory (VRAM). Skips already-loaded models."""
+        """Loads models into memory. Failures are skipped, not fatal —
+        the pipeline runs with whatever loaded successfully."""
         logger.info("━━━ Initializing Vision Pipeline ━━━")
-        for name, worker in self.workers.items():
-            if not worker.loaded:
+        loaded, failed = [], []
+
+        candidates = list(self.workers.items())
+        candidates.append(("depth", self.depth_worker))
+        candidates.append(("vlm", self.vlm_worker))
+
+        for name, worker in candidates:
+            if worker.loaded:
+                loaded.append(name)
+                continue
+            try:
                 worker.load()
-        if not self.depth_worker.loaded:
-            self.depth_worker.load()
-        if not self.vlm_worker.loaded:
-            self.vlm_worker.load()
-        logger.info("━━━ All models initialized ━━━")
+                loaded.append(name)
+            except Exception as e:
+                logger.warning(f"Skipping model '{name}': {e}")
+                failed.append(name)
+
+        logger.info(f"━━━ Loaded: {loaded or 'none'} | Skipped: {failed or 'none'} ━━━")
+        return {"loaded": loaded, "failed": failed}
 
     def set_source(self, source):
         """Change the video source (0=webcam, or file path string)."""
