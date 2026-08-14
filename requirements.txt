@@ -10,3 +10,5 @@ torchvision
 filterpy
 llama-cpp-python
 huggingface-hub
+timm
+
