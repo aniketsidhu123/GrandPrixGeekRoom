@@ -7,7 +7,9 @@ from typing import List, Optional
 import asyncio
 import os
 import json
+import logging
 
+logger = logging.getLogger("CFO")
 from .simulation import SimulationEngine, TICK_DURATION_SEC
 from .vision.pipeline import VisionPipeline
 
@@ -68,14 +70,15 @@ async def simulation_loop():
     sim_engine.running = True
     loop = asyncio.get_event_loop()
     while sim_engine.running:
-        if sim_engine.sim_speed > 0:
-            # The physics substeps and the 15-minute forecast are CPU-bound.
-            # Running them in a worker thread keeps the WebSocket broadcasts
-            # flowing instead of stalling every time a forecast fires.
-            await loop.run_in_executor(None, sim_engine.update)
-            # Each tick represents TICK_DURATION_SEC of simulated time, so the
-            # wall-clock gap between ticks is what the speed multiplier scales.
-            await asyncio.sleep(max(0.02, TICK_DURATION_SEC / sim_engine.sim_speed))
+        speed = sim_engine.sim_speed          # read once — it can change mid-tick
+        if speed > 0:
+            try:
+                await loop.run_in_executor(None, sim_engine.update)
+            except Exception:
+                logger.exception("Simulation tick failed")
+                await asyncio.sleep(0.5)
+                continue
+            await asyncio.sleep(max(0.02, TICK_DURATION_SEC / max(speed, 0.1)))
         else:
             await asyncio.sleep(0.5)
 
@@ -175,7 +178,8 @@ async def broadcast_state():
                 "state": state,
                 "heatmap": heatmap_data,
             })
-        sleep_time = max(0.1, 0.5 / sim_engine.sim_speed) if sim_engine.sim_speed > 0 else 0.5
+        speed = sim_engine.sim_speed
+        sleep_time = max(0.1, 0.5 / max(speed, 0.1)) if speed > 0 else 0.5
         await asyncio.sleep(sleep_time)
 
 async def broadcast_vision_state():
