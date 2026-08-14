@@ -222,11 +222,13 @@ async def start_vision_pipeline():
     """Start the real-time AI vision pipeline (webcam)."""
     if not vision_pipeline.running:
         vision_pipeline.set_source(0)
-        # Run blocking model loading in a thread so we don't freeze the server
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, vision_pipeline.initialize)
+        result = await loop.run_in_executor(None, vision_pipeline.initialize)
+        if not result["loaded"]:
+            return {"status": "error", "detail": "No vision models could be loaded", **result}
         asyncio.create_task(vision_pipeline.start())
-    return {"status": "started", "mode": "live"}
+        return {"status": "started", "mode": "live", **result}
+    return {"status": "already_running", "mode": "live"}
 
 @app.post("/api/vision/stop")
 async def stop_vision_pipeline():
