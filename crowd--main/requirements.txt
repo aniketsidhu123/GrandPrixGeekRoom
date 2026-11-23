@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pydantic
+numpy
+websockets
+ultralytics
+opencv-python
+torch
+torchvision
+filterpy
+llama-cpp-python
+huggingface-hub
+timm

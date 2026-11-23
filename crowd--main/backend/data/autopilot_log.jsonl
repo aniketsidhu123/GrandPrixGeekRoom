@@ -1,0 +1,4 @@
+{"id": 1, "ts": 1789904871.1, "sim_time_sec": 35.5, "kind": "divert", "source": "operator", "message": "Operator diverted 78% of Gate 1 arrivals to Gate 0.", "details": {"origin": "gate_1", "target": "gate_0", "pct": 78, "origin_queue": 0, "target_queue": 0}}
+{"id": 2, "ts": 1789904955.5, "sim_time_sec": 70.0, "kind": "autopilot_on", "source": "operator", "message": "Autopilot turned ON - will divert gates after 30s without a response", "details": {}}
+{"id": 3, "ts": 1789904973.5, "sim_time_sec": 76.5, "kind": "setting", "source": "operator", "message": "Response window set to 60s", "details": {}}
+{"id": 4, "ts": 1789905244.0, "sim_time_sec": 155.5, "kind": "divert_end", "source": "system", "message": "Divert ended: Gate 1 -> Gate 0 (78%) after 120s", "details": {"origin": "gate_1", "target": "gate_0", "pct": 78.0, "started_by": "operator"}}
