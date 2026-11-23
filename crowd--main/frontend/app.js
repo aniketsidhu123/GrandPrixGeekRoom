@@ -548,7 +548,6 @@ function updateAllUI() {
 
     // NEW: Recommended Actions + Event Setup clock
     renderRecommendedActions(s);
-    renderAutopilot(s);
 
     const esClock = document.getElementById('es-clock');
     if (esClock) esClock.textContent = hourLabel(s.clock_hour ?? 0);
@@ -731,6 +730,13 @@ const SAFE_DENSITY_PM2 = 1.08;
 // 'concession' cell the backend placed on the venue layout.
 let _landmarkZonesCache = null;
 
+// key: "originGateId>targetGateId" -> { pct, until }
+// Cards rebuild via innerHTML every tick, so a button's own state can't
+// persist — this is what lets the card show "✓ Diverted" for a few seconds
+// after a click instead of silently reverting to the same button.
+const _recentDiverts = new Map();
+const DIVERT_CONFIRM_MS = 4000;
+
 function getLandmarkZones() {
     if (_landmarkZonesCache) return _landmarkZonesCache;
     if (!gridConfig || !gridConfig.grid) return [];
@@ -788,48 +794,45 @@ function gateLabel(g) {
     return g ? String(g.gate_id).replace('gate_', 'Gate ') : null;
 }
 
-// Fruin LoS from density (same thresholds as backend/density.py)
-function losFromDensity(d) {
-    if (d < 0.31) return 'A';
-    if (d < 0.43) return 'B';
-    if (d < 1.08) return 'C';
-    if (d < 1.54) return 'D';
-    if (d < 2.17) return 'E';
-    if (d < 3.5) return 'F';
-    return 'CRITICAL';
-}
+// The panel used to rebuild on every state_update — at 2x-10x speed that's
+// 4 to 10 full DOM rebuilds per second, which a human can't read and which
+// destroys/recreates the divert buttons before anyone can click them. This
+// throttles actual re-renders to roughly human reading speed, independent
+// of sim speed. handleDivert() resets the timer to 0 so a click's own
+// confirmation state renders on the very next tick instead of waiting out
+// the rest of the window.
+let _raLastRender = 0;
+const RA_MIN_INTERVAL_MS = 1500;
 
-// "now" / "<1 min" / "6 min" (forecast resolution is one minute)
-function formatEta(sec) {
-    if (sec == null || !isFinite(sec)) return '';
-    if (sec <= 0) return 'now';
-    if (sec < 60) return '&lt;1 min';
-    return `${Math.round(sec / 60)} min`;
-}
-
-// Cards are rebuilt from state every tick; only touch the DOM when the HTML changed,
-// so the Divert button doesn't get replaced under the cursor.
-function setRaHtml(list, html) {
-    if (list._lastHtml !== html) {
-        list.innerHTML = html;
-        list._lastHtml = html;
-    }
-}
-
-// Early warning: zones the backend forecast expects to pile up (>= LoS F, 2.17 p/m²)
-// within the next 15 minutes, soonest first. See PredictionEngine.early_warnings.
 function renderRecommendedActions(s) {
+    if (Date.now() - _raLastRender < RA_MIN_INTERVAL_MS) return;
+    _raLastRender = Date.now();
+    _renderRecommendedActionsNow(s);
+}
+
+function _renderRecommendedActionsNow(s) {
     const list = document.getElementById('ra-list');
     const count = document.getElementById('ra-count');
     if (!list || !count) return;
 
-    const warnings = (s.forecast_warnings || []).slice(0, 4);
+    const hazards = (s.hazard_zones || [])
+        .filter(z => ['WARNING', 'CRITICAL', 'EMERGENCY'].includes(z.severity))
+        // time_to_choke_sec first; cell_x/cell_y as a deterministic tiebreak
+        // so zones tied on danger stop reshuffling every tick — several
+        // zones landing on the exact same density (a common plateau) used
+        // to reorder randomly each rebuild because only the primary key
+        // was compared.
+        .sort((a, b) =>
+            (a.time_to_choke_sec ?? 9999) - (b.time_to_choke_sec ?? 9999) ||
+            (a.cell_x - b.cell_x) ||
+            (a.cell_y - b.cell_y))
+        .slice(0, 4);
 
-    count.textContent = warnings.length;
-    count.classList.toggle('zero', warnings.length === 0);
+    count.textContent = hazards.length;
+    count.classList.toggle('zero', hazards.length === 0);
 
-    if (!warnings.length) {
-        setRaHtml(list, '<div class="ra-empty">No pile-up forecast in the next 15 minutes.</div>');
+    if (!hazards.length) {
+        list.innerHTML = '<div class="ra-empty">No action needed. All zones within safe limits.</div>';
         return;
     }
 
@@ -842,203 +845,87 @@ function renderRecommendedActions(s) {
             !status.includes('RESTRICT');
     });
 
-    const cards = warnings.map(w => {
-        const eta = w.eta_sec;
-        const etaText = formatEta(eta);
-        const now = Number(w.current_density ?? 0);
-        const peak = Number(w.peak_density ?? 0);
-        const peakLos = losFromDensity(peak);
-        const name = zoneLabel(w.cell_x, w.cell_y);
+    const cards = hazards.map(z => {
+        const eta = z.time_to_choke_sec;
+        // time_to_choke_sec is 0.0 when density is not rising (no estimate)
+        const etaLabel = (eta != null && eta > 0 && eta < 600) ? `${Math.max(1, Math.round(eta / 60))} min` : '';
+        const dens = Number(z.current_density ?? z.density ?? 0);
+        const name = zoneLabel(z.cell_x, z.cell_y);
 
-        const headline = eta <= 0
-            ? `${name} is at LoS ${peakLos} (${peak.toFixed(1)} p/m²) now.`
-            : `${name} reaches LoS ${peakLos} (${peak.toFixed(1)} p/m²) in ${etaText}.`;
+        // Per-zone origin gate: whichever real gate sits closest to this
+        // hazard's cell — that's the one presumed to be feeding it.
+        const originGate = nearestGate(allGates, z.cell_x, z.cell_y);
 
-        // Origin gate = real gate closest to the zone, presumed to be feeding it
-        const byId = id => (id ? allGates.find(g => g.gate_id === id) || null : null);
-        const originGate = w.origin_gate !== undefined ? byId(w.origin_gate) : nearestGate(allGates, w.cell_x, w.cell_y);
-
-        // Least-loaded open gate that isn't the origin: shortest queue, then highest admit rate
-        const target = w.target_gate !== undefined ? byId(w.target_gate) : [...openGates]
+        // Least-loaded open gate that ISN'T the origin — shortest queue,
+        // then highest admit rate.
+        const target = [...openGates]
             .filter(g => !originGate || g.gate_id !== originGate.gate_id)
             .sort((a, b) =>
                 ((a.queue_length ?? 0) - (b.queue_length ?? 0)) ||
                 ((b.target_rate_per_sec ?? 0) - (a.target_rate_per_sec ?? 0)))[0];
 
-        // Divert %: how much inflow has to drop for the forecast peak to fall back under
-        // the LoS-C safe ceiling (1.08 p/m², same threshold backend/density.py uses).
-        // The backend computes it (Autopilot uses the same number); fall back to local math.
+        // Per-zone divert %: how much inflow has to drop for THIS zone to
+        // fall back under the LoS-C safe ceiling (1.08 p/m², same threshold
+        // backend/density.py uses). Real formula, not a flat guess.
         let pct = 0;
-        if (w.divert_pct !== undefined) {
-            pct = w.divert_pct;
-        } else if (peak > SAFE_DENSITY_PM2) {
-            pct = Math.round(((peak - SAFE_DENSITY_PM2) / peak) * 100);
+        if (dens > SAFE_DENSITY_PM2) {
+            pct = Math.round(((dens - SAFE_DENSITY_PM2) / dens) * 100);
             pct = Math.max(5, Math.min(95, pct));
         }
 
         const originLabel = gateLabel(originGate);
         const targetLabel = gateLabel(target);
-
-        const activeDivert = originGate
-            ? (s.active_diverts || []).find(d => d.origin === originGate.gate_id)
-            : null;
+        const etaPhrase = etaLabel ? ` in ${etaLabel}` : '';
 
         let divertBlock = '';
         let action;
-        if (activeDivert) {
-            const tgtName = gateLabel({ gate_id: activeDivert.target });
-            action = headline;
-            divertBlock = `<div class="ra-divert-confirm">✓ Diverting ${Math.round(activeDivert.pct)}% of ${originLabel} arrivals to ${tgtName} — ${Math.round(activeDivert.remaining_sec)}s left</div>`;
-        } else if (target && originGate && originLabel && targetLabel && originLabel !== targetLabel && pct > 0) {
-            // Every number here is a real field off the gate objects: nothing invented.
+        if (target && originGate && originLabel && targetLabel && originLabel !== targetLabel && pct > 0) {
+            // Every number here is a real field off the gate objects — nothing invented.
             const oq = originGate.queue_length ?? 0;
             const ow = originGate.wait_time_sec ?? 0;
             const tq = target.queue_length ?? 0;
             const tRate = target.target_rate_per_sec ?? 0;
 
-            action = `${headline} ${originLabel}: ${oq} queuing, ${ow.toFixed(1)}s wait. `
-                   + `Divert ${pct}% of new arrivals to ${targetLabel}, `
-                   + `currently ${tq} queuing, admitting ${tRate.toFixed(1)}/s.`;
+            action = `${originLabel}: ${oq} queuing, ${ow.toFixed(1)}s wait. `
+                    + `Divert ${pct}% of new arrivals to ${targetLabel} — `
+                    + `currently ${tq} queuing, admitting ${tRate.toFixed(1)}/s.`;
 
-            divertBlock = `<div class="ra-divert-row">
-                 <span class="ra-divert-label">${originLabel} → ${targetLabel}</span>
-                 <button class="ra-divert-btn"
-                         data-origin="${originGate.gate_id}"
-                         data-target="${target.gate_id}"
-                         data-pct="${pct}">Divert ${pct}%</button>
-               </div>`;
-            const ap = s.autopilot;
-            const pend = ap && ap.enabled ? (ap.pending || []).find(p => p.origin === originGate.gate_id) : null;
-            if (pend && pend.seconds_left != null) {
-                divertBlock += `<div class="ra-auto-note">🤖 Autopilot will divert ${pend.pct}% in ${pend.seconds_left}s unless you act</div>`;
-            }
+            const key = `${originGate.gate_id}>${target.gate_id}`;
+            const recent = _recentDiverts.get(key);
+
+            divertBlock = recent
+                ? `<div class="ra-divert-confirm">✓ Diverted ${recent.pct}% — draining ${originLabel}</div>`
+                : `<div class="ra-divert-row">
+                     <span class="ra-divert-label">${originLabel} → ${targetLabel}</span>
+                     <button class="ra-divert-btn"
+                             data-origin="${originGate.gate_id}"
+                             data-target="${target.gate_id}"
+                             data-pct="${pct}">
+                       Divert ${pct}%
+                     </button>
+                   </div>`;
         } else if (target && targetLabel) {
-            action = `${headline} Shift intake toward <b>${targetLabel}</b>.`;
+            action = `${name} reaches LoS ${z.fruin_los || z.severity} (${dens.toFixed(1)} p/m²)${etaPhrase}. Shift intake toward <b>${targetLabel}</b>.`;
         } else {
-            action = `${headline} No clearer alternative — throttle intake.`;
+            action = `${name} reaches LoS ${z.fruin_los || z.severity} (${dens.toFixed(1)} p/m²)${etaPhrase}. No clearer alternative — throttle intake.`;
         }
 
         return `
-          <div class="ra-card ${eta <= 0 ? '' : 'warn'}">
+          <div class="ra-card ${z.severity === 'WARNING' ? 'warn' : ''}">
             <div class="ra-top">
-              <span class="ra-title">${name} ${eta <= 0 ? 'congested' : 'pile-up expected'}</span>
-              <span class="ra-eta">${etaText}</span>
+              <span class="ra-title">${name} congested</span>
+              ${etaLabel ? `<span class="ra-eta">${etaLabel}</span>` : ''}
             </div>
-            <div class="ra-meta">now ${now.toFixed(1)} → peak ${peak.toFixed(1)} p/m² · LoS ${peakLos}</div>
+            <div class="ra-meta">${dens.toFixed(1)} p/m² · LoS ${z.fruin_los || z.severity}</div>
             ${divertBlock}
             <div class="ra-body">${action}</div>
             ${!target ? '<div class="ra-nospare">no alternative with spare capacity</div>' : ''}
           </div>`;
     }).join('');
 
-    setRaHtml(list, cards);
+    list.innerHTML = cards;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// AUTOPILOT: status comes with every state update; the activity log is
-// fetched only when the backend says it changed (log_seq).
-// ═══════════════════════════════════════════════════════════════════
-
-let _apLogSeq = null;
-
-function escapeHtml(t) {
-    return String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-function apPost(path, body) {
-    return fetch(path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body || {}),
-    })
-        .then(r => r.json())
-        .then(d => { _apLogSeq = d.log_seq; renderApStatus(d); renderApLog(d.log || [], d.ack_seq); })
-        .catch(err => console.error('[Autopilot]', err));
-}
-
-function fetchApLog() {
-    fetch('/api/autopilot')
-        .then(r => r.json())
-        .then(d => { _apLogSeq = d.log_seq; renderApLog(d.log || [], d.ack_seq); })
-        .catch(() => {});
-}
-
-function renderApStatus(ap) {
-    const toggle = document.getElementById('ap-toggle');
-    const status = document.getElementById('ap-status');
-    const wait = document.getElementById('ap-wait');
-    const pendingEl = document.getElementById('ap-pending');
-    const unseen = document.getElementById('ap-unseen');
-    if (!toggle || !status) return;
-
-    toggle.checked = !!ap.enabled;
-    status.classList.toggle('on', !!ap.enabled);
-    status.textContent = ap.enabled
-        ? `On: diverts ${ap.wait_sec === 0 ? 'immediately' : `after ${ap.wait_sec}s without a response`} `
-          + `(only where already busy and a pile-up is due within ${Math.round(ap.max_eta_sec / 60)} min; max ${ap.max_pct}%)`
-        : 'Off: every decision waits for you';
-
-    if (wait) wait.querySelectorAll('.ap-wait-btn').forEach(b =>
-        b.classList.toggle('on', Number(b.dataset.wait) === ap.wait_sec));
-
-    if (pendingEl) {
-        const items = ap.enabled ? (ap.pending || []) : [];
-        pendingEl.innerHTML = items.map(p =>
-            `<div class="ap-pending-item">🤖 ${escapeHtml(gateLabel({ gate_id: p.origin }))} → ${escapeHtml(gateLabel({ gate_id: p.target }))} ` +
-            `${p.pct}% (${escapeHtml(p.zone)}) in ${p.seconds_left ?? 0}s unless you act</div>`).join('');
-    }
-
-    if (unseen) {
-        unseen.textContent = ap.unseen || 0;
-        unseen.classList.toggle('zero', !ap.unseen);
-    }
-}
-
-let _apLogHtml = null;
-function renderApLog(log, ackSeq) {
-    const el = document.getElementById('ap-log');
-    if (!el) return;
-    const html = !log.length
-        ? '<div class="ap-empty">No activity yet.</div>'
-        : log.map(e => {
-            const cls = e.source === 'autopilot' ? 'auto' : e.source === 'operator' ? 'you' : '';
-            const tag = e.source === 'autopilot' ? 'AUTO' : e.source === 'operator' ? 'YOU' : 'SYSTEM';
-            const t = new Date(e.ts * 1000).toLocaleTimeString();
-            const sim = Math.floor(e.sim_time_sec || 0);
-            const simLabel = `T+${String(Math.floor(sim / 60)).padStart(2, '0')}:${String(sim % 60).padStart(2, '0')}`;
-            return `<div class="ap-entry ${cls} ${e.id > ackSeq ? 'unseen' : ''}">
-                <div class="ap-entry-meta"><span class="ap-tag">${tag}</span><span>${t} · ${simLabel}</span></div>
-                ${escapeHtml(e.message)}
-            </div>`;
-        }).join('');
-    if (html !== _apLogHtml) {          // don't reset the scroll position for nothing
-        el.innerHTML = html;
-        _apLogHtml = html;
-    }
-}
-
-function renderAutopilot(s) {
-    const ap = s.autopilot;
-    if (!ap) return;
-    renderApStatus(ap);
-    if (ap.log_seq !== _apLogSeq) {     // something new was logged (or first load)
-        _apLogSeq = ap.log_seq;
-        fetchApLog();
-    }
-}
-
-document.getElementById('ap-toggle')?.addEventListener('change', e => apPost('/api/autopilot', { enabled: e.target.checked }));
-document.getElementById('ap-wait')?.addEventListener('click', e => {
-    const btn = e.target.closest('.ap-wait-btn');
-    if (btn) apPost('/api/autopilot', { wait_sec: Number(btn.dataset.wait) });
-});
-document.getElementById('ap-ack')?.addEventListener('click', () => apPost('/api/autopilot/ack'));
-
-// ── Divert button ──────────────────────────────────────────────────
-// Cards are rebuilt from state every tick, so listeners on individual buttons
-// would detach. One delegated listener on the list survives re-renders.
-// pointerdown (not click) because click needs press+release on the *same*
-// element, and a re-render between the two would swallow it.
 function handleDivert(originGateId, targetGateId, pct) {
     sendCommand({
         action: 'divert_gate',
@@ -1046,13 +933,23 @@ function handleDivert(originGateId, targetGateId, pct) {
         target_gate_id: targetGateId,
         pct: pct,
     });
+
+    const key = `${originGateId}>${targetGateId}`;
+    _recentDiverts.set(key, { pct, until: Date.now() + DIVERT_CONFIRM_MS });
+    // Bypass the throttle once, so the confirmation shows on the very next
+    // state_update instead of waiting out whatever's left of the window.
+    _raLastRender = 0;
+    setTimeout(() => {
+        const entry = _recentDiverts.get(key);
+        if (entry && Date.now() >= entry.until) _recentDiverts.delete(key);
+    }, DIVERT_CONFIRM_MS + 100);
 }
 
-document.getElementById('ra-list')?.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
+// One delegated listener for the whole panel — cards are replaced wholesale
+// every tick, so listeners attached to individual buttons would leak/detach.
+document.getElementById('ra-list')?.addEventListener('click', (e) => {
     const btn = e.target.closest('.ra-divert-btn');
     if (!btn) return;
-    e.preventDefault();
     handleDivert(btn.dataset.origin, btn.dataset.target, Number(btn.dataset.pct));
 });
 
@@ -1433,13 +1330,10 @@ function updateVisionDashboard(data) {
 // EVENT SETUP — wires to /api/ingress
 // ═══════════════════════════════════════════════════════════════════
 
-// All three use the "gate" sensor curve (sensor 12). It peaks at 08:00, so opening
-// doors at 07:30 puts the venue straight into the rush.
-//   sellout  -> 45,000 x 2.0 ≈ 13,700 arrivals/hr at 07:37  (dense crowd, LoS F zones)
 const PRESETS = {
-    weekday:  { archetype: 'gate', attendance: 18000, start_hour: 7.5, scale: 1.0, weekend: false },
-    matchday: { archetype: 'gate', attendance: 45000, start_hour: 7.5, scale: 1.5, weekend: false },
-    sellout:  { archetype: 'gate', attendance: 45000, start_hour: 7.5, scale: 2.0, weekend: false },
+    weekday:  { archetype: 'gate',      attendance: 18000, start_hour: 8,  scale: 1.0, weekend: false },
+    matchday: { archetype: 'concourse', attendance: 45000, start_hour: 16, scale: 1.5, weekend: false },
+    sellout:  { archetype: 'concourse', attendance: 60000, start_hour: 17, scale: 2.0, weekend: false },
 };
 
 async function applyIngress(partial) {
@@ -1463,12 +1357,9 @@ function updateIngressReadout(data) {
     if (!el || !data) return;
     const perHour = data.current_rate_per_hour ?? 0;
     const cfg = data.config || {};
-    const city = String(cfg.source || '').includes('Melbourne') ? 'Melbourne' : (cfg.source || 'sensor data');
-    const line2 = cfg.sensor_id != null
-        ? `${city} sensor ${cfg.sensor_id}${cfg.days_observed ? ' · ' + Number(cfg.days_observed).toLocaleString() + ' days' : ''}`
-        : city;
-    const paused = data.enabled === false ? ' · paused' : '';
-    el.innerHTML = `${Math.round(perHour).toLocaleString()} arrivals/hr${paused}<br>${line2}`;
+    const src = cfg.sensor_id ?? cfg.source ?? 'sensor data';
+    const state = data.enabled === false ? ' · paused' : '';
+    el.textContent = `${Math.round(perHour).toLocaleString()} arrivals/hr · ${src}${state}`;
 }
 
 function refreshIngressReadout() {
@@ -1485,28 +1376,6 @@ function debounce(fn, ms) {
     return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
-// Make the sliders reflect what the backend is actually using (not the HTML defaults)
-function syncEventSetupFromServer(data) {
-    const cfg = data && data.config;
-    if (!cfg) return;
-    const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
-    set('es-attendance', cfg.attendance);
-    set('es-hour', cfg.start_hour);
-    set('es-scale', cfg.scale);
-    if (cfg.attendance != null) document.getElementById('es-attendance-val').textContent = Number(cfg.attendance).toLocaleString();
-    if (cfg.start_hour != null) document.getElementById('es-hour-val').textContent = hourLabel(Number(cfg.start_hour));
-    if (cfg.scale != null) document.getElementById('es-scale-val').textContent = Number(cfg.scale).toFixed(1) + '×';
-    document.querySelectorAll('.day-btn').forEach(b =>
-        b.classList.toggle('on', (b.dataset.weekend === 'true') === !!cfg.weekend));
-    // highlight the preset that matches, if any
-    document.querySelectorAll('.preset-btn').forEach(b => {
-        const p = PRESETS[b.dataset.preset];
-        const match = p && p.archetype === cfg.archetype && p.attendance === cfg.attendance &&
-            p.start_hour === cfg.start_hour && p.scale === cfg.scale && p.weekend === !!cfg.weekend;
-        b.classList.toggle('active', !!match);
-    });
-}
-
 function initEventSetup() {
     if (!document.getElementById('es-attendance')) return;
 
@@ -1521,8 +1390,6 @@ function initEventSetup() {
             document.getElementById('es-attendance-val').textContent = p.attendance.toLocaleString();
             document.getElementById('es-hour-val').textContent = hourLabel(p.start_hour);
             document.getElementById('es-scale-val').textContent = p.scale.toFixed(1) + '×';
-            document.querySelectorAll('.day-btn').forEach(b =>
-                b.classList.toggle('on', (b.dataset.weekend === 'true') === p.weekend));
             await applyIngress(p);
         });
     });
@@ -1559,7 +1426,7 @@ function initEventSetup() {
         await applyIngress({ enabled: !paused });
     });
 
-    fetch('/api/ingress').then(r => r.json()).then(d => { syncEventSetupFromServer(d); updateIngressReadout(d); }).catch(() => {});
+    refreshIngressReadout();
     setInterval(refreshIngressReadout, 5000);  // rate follows the hourly curve as sim time advances
 }
 

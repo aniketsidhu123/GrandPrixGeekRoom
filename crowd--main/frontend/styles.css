@@ -830,7 +830,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
     margin-top: 10px;
     font-size: 0.72rem;
     font-weight: 600;
-    color: #4ade80;
+    color: var(--los-b);
     background: rgba(74, 222, 128, 0.1);
     border: 1px solid rgba(74, 222, 128, 0.3);
     border-radius: var(--radius-sm);
@@ -856,99 +856,6 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .ra-body { font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4; }
 .ra-nospare { font-size: 0.68rem; color: var(--text-tertiary); font-style: italic; margin-top: 6px; }
 .ra-empty { color: var(--text-secondary); font-size: 0.8rem; padding: 8px 0; }
-
-/* ─── Autopilot ─── */
-.ap-row { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-.ap-switch { position: relative; width: 38px; height: 22px; flex: none; }
-.ap-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-.ap-slider {
-    position: absolute; inset: 0;
-    background: var(--bg-card);
-    border: var(--glass-border);
-    border-radius: 999px;
-    cursor: pointer;
-    transition: background 0.2s var(--ease-out);
-}
-.ap-slider::before {
-    content: '';
-    position: absolute; top: 2px; left: 3px;
-    width: 16px; height: 16px;
-    background: #fff; border-radius: 50%;
-    transition: transform 0.2s var(--ease-out);
-}
-.ap-switch input:checked + .ap-slider { background: var(--accent-blue); border-color: transparent; }
-.ap-switch input:checked + .ap-slider::before { transform: translateX(15px); }
-.ap-status { font-size: 0.72rem; color: var(--text-secondary); line-height: 1.35; }
-.ap-status.on { color: #4ade80; }
-
-.ap-wait-label { font-size: 0.66rem; color: var(--text-tertiary); margin: 10px 0 5px; }
-.ap-wait { display: flex; flex-wrap: wrap; gap: 6px; }
-.ap-wait-btn {
-    flex: 1 1 calc(33.333% - 4px);
-    padding: 6px 4px;
-    border-radius: var(--radius-sm);
-    border: var(--glass-border);
-    background: var(--bg-card);
-    color: var(--text-secondary);
-    font-size: 0.7rem; font-weight: 600;
-    font-family: 'Inter', sans-serif;
-    cursor: pointer;
-    transition: all 0.2s var(--ease-out);
-}
-.ap-wait-btn:hover { background: var(--bg-hover); }
-.ap-wait-btn.on { background: var(--accent-blue); color: #fff; border-color: transparent; }
-
-.ap-pending-item {
-    margin-top: 8px;
-    font-size: 0.7rem;
-    color: #93c5fd;
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.25);
-    border-radius: var(--radius-sm);
-    padding: 6px 9px;
-    line-height: 1.4;
-}
-
-.ap-log-head {
-    display: flex; justify-content: space-between; align-items: center;
-    margin: 14px 0 6px;
-    font-size: 0.62rem; font-weight: 700;
-    letter-spacing: 0.06em; text-transform: uppercase;
-    color: var(--text-tertiary);
-}
-.ap-link {
-    background: none; border: none;
-    color: var(--accent-blue);
-    font-size: 0.66rem; font-weight: 600;
-    font-family: 'Inter', sans-serif;
-    cursor: pointer;
-    text-transform: none; letter-spacing: 0;
-}
-.ap-link:hover { text-decoration: underline; }
-.ap-log { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-.ap-entry {
-    font-size: 0.7rem; line-height: 1.4;
-    color: var(--text-secondary);
-    background: var(--bg-card);
-    border-left: 3px solid var(--text-dim);
-    border-radius: var(--radius-sm);
-    padding: 7px 9px;
-}
-.ap-entry.auto { border-left-color: var(--accent-blue); }
-.ap-entry.you { border-left-color: var(--accent-orange); }
-.ap-entry.unseen { background: rgba(59, 130, 246, 0.1); }
-.ap-entry-meta {
-    display: flex; justify-content: space-between;
-    font-size: 0.6rem; color: var(--text-dim);
-    margin-bottom: 2px;
-    font-variant-numeric: tabular-nums;
-}
-.ap-tag { font-weight: 700; letter-spacing: 0.05em; }
-.ap-entry.auto .ap-tag { color: #60a5fa; }
-.ap-entry.you .ap-tag { color: var(--accent-orange); }
-.ap-empty { font-size: 0.72rem; color: var(--text-dim); text-align: center; padding: 10px; }
-
-.ra-auto-note { margin-top: 6px; font-size: 0.68rem; color: #60a5fa; }
 
 /* ─── Prediction Timeline ─── */
 .prediction-timeline {

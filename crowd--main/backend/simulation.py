@@ -3,7 +3,6 @@ Simulation Engine — Core crowd simulation with integrated density analysis,
 prediction forecasting, dynamic rerouting, and gate actuation.
 """
 
-import os
 import random
 import time
 import numpy as np
@@ -19,24 +18,12 @@ from .physics import SocialForceModel
 from .density import DensityAnalyzer
 from .prediction import PredictionEngine
 from .ingress import ArrivalModel
-from .autopilot import Autopilot
 
 
 # Simulated seconds advanced by one engine tick. The physics integrator runs at
 # a finer dt, so a tick executes several substeps to cover this span — keeping
 # the displayed clock honest about how much movement actually happened.
 TICK_DURATION_SEC = 0.5
-
-# Rerouting runs an A* per exit per agent, which dominates the tick cost once a
-# crowd is dense. Each agent is re-routed at most once per cooldown window, and
-# at most MAX_REROUTES_PER_TICK agents are processed per tick, so a crowd of
-# several hundred stays simulable in real time.
-REROUTE_COOLDOWN_TICKS = 10      # 10 ticks = 5 simulated seconds
-MAX_REROUTES_PER_TICK = 40
-
-# Operator gate diverts ("send N% of Gate A's new arrivals to Gate B") last this long
-# in simulated seconds unless re-issued.
-DIVERT_DURATION_SEC = 120.0
 
 
 class SimulationEngine:
@@ -126,13 +113,6 @@ class SimulationEngine:
         # Fractional admit capacity carried between ticks, per gate, so rates
         # below one person per tick (e.g. a throttled 0.5/s gate) still admit.
         self._gate_credit: Dict[str, float] = {g.gate_id: 0.0 for g in self.gate_objects}
-        self._last_reroute: Dict[int, int] = {}   # agent id -> tick of last reroute
-        self._diverts: Dict[str, dict] = {}       # origin gate id -> {target, pct, until}
-        self.forecast_warnings: List[dict] = []   # early pile-up warnings (see PredictionEngine.early_warnings)
-        self._landmarks = None                    # cached (x, y, label) for named zones
-        self.autopilot = Autopilot(
-            log_path=os.path.join(os.path.dirname(__file__), "data", "autopilot_log.jsonl")
-        )
 
         # Active reroute tracking
         self.active_reroutes: List[RerouteRecommendation] = []
@@ -270,29 +250,8 @@ class SimulationEngine:
         throttling a gate builds a real queue instead of making people vanish.
         """
         n_gates = len(self.gate_objects)
-
-        # Drop expired diverts, then route each new arrival. An arrival headed for a
-        # diverted gate is sent to the target gate with probability pct/100 (never to a
-        # closed gate), so the split is real queue movement, not a display trick.
-        for k in [k for k, d in self._diverts.items() if d["until"] <= self.sim_time]:
-            d = self._diverts.pop(k)
-            self.autopilot.record(
-                "divert_end", "system",
-                f"Divert ended: {self._gate_name(k)} -> {self._gate_name(d['target'])} ({int(d['pct'])}%) "
-                f"after {int(DIVERT_DURATION_SEC)}s",
-                self.sim_time,
-                {"origin": k, "target": d["target"], "pct": d["pct"], "started_by": d.get("source", "operator")},
-            )
-        by_id = {g.gate_id: g for g in self.gate_objects}
         for _ in range(arrivals):
-            gate = self.gate_objects[random.randrange(n_gates)]
-            d = self._diverts.get(gate.gate_id)
-            if d and random.random() < d["pct"] / 100.0:
-                tgt = by_id.get(d["target"])
-                if tgt is not None and tgt.action != GateAction.CLOSE:
-                    tgt.queue_length += 1
-                    continue
-            gate.queue_length += 1
+            self.gate_objects[random.randrange(n_gates)].queue_length += 1
 
         total_admitted = 0
         for idx, gate in enumerate(self.gate_objects):
@@ -421,16 +380,6 @@ class SimulationEngine:
                 self.gates, self.exits,
                 sim_time_sec=self.sim_time,
             )
-        elif len(self.agents) <= 5:
-            self.prediction_engine.reset_forecast()
-
-        # 10. Early warnings: zones the forecast expects to pile up in the next 15 minutes
-        self.forecast_warnings = self._enrich_warnings(
-            self.prediction_engine.early_warnings(raw_density, self.sim_time)
-        )
-
-        # 11. Autopilot: apply recommendations nobody has acted on within the response window
-        self.autopilot.evaluate(self)
     
     def _handle_rerouting(self, raw_density: np.ndarray):
         """Reroute agents whose paths intersect critical zones."""
@@ -451,9 +400,6 @@ class SimulationEngine:
         
         reroute_count = 0
         self.active_reroutes.clear()
-        if self.tick_count % 50 == 0:
-            live = {a.id for a in self.agents}
-            self._last_reroute = {i: t for i, t in self._last_reroute.items() if i in live}
         
         for agent in self.agents:
             if agent.status == "arrived":
@@ -467,11 +413,6 @@ class SimulationEngine:
                     break
             
             if path_through_bottleneck:
-                # Skip agents re-routed recently, and cap the work done per tick
-                if self.tick_count - self._last_reroute.get(agent.id, -10**9) < REROUTE_COOLDOWN_TICKS:
-                    continue
-                if reroute_count >= MAX_REROUTES_PER_TICK:
-                    continue
                 start_int = Point(x=float(int(agent.pos.x)), y=float(int(agent.pos.y)))
                 
                 # Use density-weighted pathfinding to find best alternative
@@ -488,7 +429,6 @@ class SimulationEngine:
                         agent.color = "#f59e0b"  # Amber for rerouted
                         agent.rerouted = True
                         reroute_count += 1
-                        self._last_reroute[agent.id] = self.tick_count
                         
                         # Record active reroute
                         if len(self.active_reroutes) < 10:
@@ -505,10 +445,6 @@ class SimulationEngine:
     def _auto_gate_control(self, raw_density: np.ndarray):
         """Automatically throttle gates that feed into congested downstream zones."""
         for gate_state in self.gate_objects:
-            # Operator override wins: don't let auto-control undo a manual
-            # Throttle/Close on the next tick. Manual "Open" hands control back.
-            if str(gate_state.status).startswith("MANUAL_"):
-                continue
             gx, gy = int(gate_state.position.x), int(gate_state.position.y)
             
             # Check density in downstream area (5-cell radius ahead of gate)
@@ -576,106 +512,9 @@ class SimulationEngine:
             if gate.gate_id == gate_id:
                 gate.action = GateAction(action)
                 gate.target_rate_per_sec = rate
-                # Open = give the gate back to auto-control; anything else is a manual hold
-                gate.status = "OPEN" if action == "OPEN_FULL" else "MANUAL_" + action
+                gate.status = "MANUAL_" + action
                 break
                 
-    # ─────────────────────────────────────────────
-    # Recommendations, zone names and diverts
-    # ─────────────────────────────────────────────
-
-    @staticmethod
-    def _gate_name(gate_id: str) -> str:
-        return str(gate_id).replace("gate_", "Gate ")
-
-    def zone_label(self, cell_x: int, cell_y: int) -> str:
-        """Same naming the dashboard uses: nearest concession cell within 6 cells is 'Food Court N'."""
-        if self._landmarks is None:
-            self._landmarks, n = [], 0
-            for y, row in enumerate(self.grid):
-                for x, cell in enumerate(row):
-                    if cell == "concession":
-                        n += 1
-                        self._landmarks.append((x, y, f"Food Court {n}"))
-        best, best_d = None, float("inf")
-        for x, y, label in self._landmarks:
-            d = ((x - cell_x) ** 2 + (y - cell_y) ** 2) ** 0.5
-            if d < best_d:
-                best, best_d = label, d
-        return best if best is not None and best_d <= 6 else f"Zone ({cell_x}, {cell_y})"
-
-    def _enrich_warnings(self, warnings: List[dict]) -> List[dict]:
-        """
-        Attach the recommended divert to each early warning: the gate feeding the zone
-        (nearest by position), the least-loaded open gate to send arrivals to instead,
-        and how much inflow has to drop for the forecast peak to fall under the LoS-C
-        ceiling. The dashboard button and Autopilot both use these exact values.
-        """
-        def open_gate(g):
-            status = str(g.status)
-            return g.action != GateAction.CLOSE and "THROTTL" not in status and "RESTRICT" not in status
-
-        for w in warnings:
-            origin = min(
-                self.gate_objects,
-                key=lambda g: (g.position.x - w["cell_x"]) ** 2 + (g.position.y - w["cell_y"]) ** 2,
-                default=None,
-            )
-            candidates = [g for g in self.gate_objects if open_gate(g) and (origin is None or g.gate_id != origin.gate_id)]
-            target = min(candidates, key=lambda g: (g.queue_length, -g.target_rate_per_sec), default=None)
-
-            peak = w["peak_density"]
-            pct = 0
-            if peak > 1.08:
-                pct = int((peak - 1.08) / peak * 100 + 0.5)
-                pct = max(5, min(95, pct))
-
-            w["origin_gate"] = origin.gate_id if origin else None
-            w["target_gate"] = target.gate_id if target else None
-            w["divert_pct"] = pct
-        return warnings
-
-    def divert_gate(self, origin_id: str, target_id: str, pct, source: str = "operator",
-                    context: dict = None) -> bool:
-        """Send pct% of new arrivals bound for origin_id to target_id for DIVERT_DURATION_SEC."""
-        try:
-            pct = max(1.0, min(100.0, float(pct)))
-        except (TypeError, ValueError):
-            return False
-        ids = {g.gate_id for g in self.gate_objects}
-        if origin_id not in ids or target_id not in ids or origin_id == target_id:
-            return False
-
-        self._diverts[origin_id] = {
-            "target": target_id,
-            "pct": pct,
-            "until": self.sim_time + DIVERT_DURATION_SEC,
-            "source": source,
-        }
-        self.autopilot.clear_pending(origin_id)
-
-        by_id = {g.gate_id: g for g in self.gate_objects}
-        o, t = by_id[origin_id], by_id[target_id]
-        head = f"diverted {int(pct)}% of {self._gate_name(origin_id)} arrivals to {self._gate_name(target_id)}"
-        if source == "autopilot" and context:
-            eta = context.get("eta_sec", 0)
-            when = "now" if eta <= 0 else (f"in {int(round(eta / 60))} min" if eta >= 60 else "in <1 min")
-            message = (f"Autopilot {head}. {context.get('zone')} forecast LoS "
-                       f"{'CRITICAL' if context.get('peak_density', 0) >= 3.5 else 'F'} "
-                       f"({context.get('peak_density', 0):.1f} p/m²) {when}; "
-                       f"no operator response for {context.get('waited_sec', 0)}s.")
-        else:
-            message = f"Operator {head}."
-        self.autopilot.record(
-            "divert", source, message, self.sim_time,
-            {
-                "origin": origin_id, "target": target_id, "pct": int(pct),
-                "origin_queue": o.queue_length, "target_queue": t.queue_length,
-                **(context or {}),
-            },
-        )
-        return True
-
     def get_state(self) -> dict:
         total_rerouted = sum(1 for a in self.agents if a.rerouted)
         densities = [zd.density for zd in self.zone_densities] if self.zone_densities else [0.0]
@@ -698,13 +537,6 @@ class SimulationEngine:
             sim_time_sec=round(self.sim_time, 1),
             sim_speed=self.sim_speed,
             clock_hour=round(self.arrival_model.hour_at(self.sim_time), 2),
-            forecast_warnings=self.forecast_warnings,
-            autopilot=self.autopilot.status(),
-            active_diverts=[
-                {"origin": o, "target": d["target"], "pct": d["pct"],
-                 "remaining_sec": round(max(0.0, d["until"] - self.sim_time), 1)}
-                for o, d in self._diverts.items() if d["until"] > self.sim_time
-            ],
         ).model_dump()
     
     def get_heatmap_data(self) -> dict:
